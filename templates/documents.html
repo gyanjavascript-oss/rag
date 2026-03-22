@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Fund Documents{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Fund Documents</h1>
+    <p class="page-sub">Upload and manage the documents used to answer investor questions.</p>
+  </div>
+  <button class="btn-primary" onclick="document.getElementById('uploadModal').style.display='flex'">
+    + Upload Document
+  </button>
+</div>
+
+{% if not documents %}
+<div class="empty-card">
+  <div class="empty-icon">◫</div>
+  <h3>No documents yet</h3>
+  <p>Upload your fund's LPA, presentations, policies, and memos to enable AI-powered Q&A.</p>
+  <button class="btn-primary" onclick="document.getElementById('uploadModal').style.display='flex'">
+    Upload First Document
+  </button>
+  {% if user.role == 'admin' %}
+  <p class="mt-2" style="color:var(--muted); font-size:.85rem;">
+    Or place files in the <code>/documents</code> folder and
+    <a href="#" onclick="bulkIngest(); return false;">bulk ingest</a>.
+  </p>
+  {% endif %}
+</div>
+{% else %}
+<div class="doc-type-legend">
+  {% for dtype in ['LPA','Presentation','Policy','Memo','Tax','Other'] %}
+  <span class="type-badge type-{{ dtype|lower }}">{{ dtype }}</span>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Document</th>
+        <th>Type</th>
+        <th>Uploaded by</th>
+        <th>Date</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for doc in documents %}
+      <tr>
+        <td>
+          <div class="doc-name">{{ doc.name }}</div>
+          {% if doc.content %}
+          <div class="doc-preview">{{ doc.content[:100] }}…</div>
+          {% endif %}
+        </td>
+        <td><span class="type-badge type-{{ doc.doc_type|lower }}">{{ doc.doc_type }}</span></td>
+        <td>{{ doc.uploaded_by_name or '—' }}</td>
+        <td>{{ doc.uploaded_at[:10] }}</td>
+        <td>
+          <form method="POST" action="{{ url_for('delete_document', doc_id=doc.id) }}"
+                onsubmit="return confirm('Remove this document from the index?')">
+            <button class="btn-danger-sm">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Upload Modal -->
+<div id="uploadModal" class="modal-overlay" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Upload Fund Document</h3>
+      <button class="modal-close" onclick="document.getElementById('uploadModal').style.display='none'">✕</button>
+    </div>
+    <form method="POST" action="{{ url_for('upload_document') }}" enctype="multipart/form-data">
+      <div class="field-group">
+        <label>Document Name</label>
+        <input type="text" name="name" placeholder="e.g. Limited Partnership Agreement v3.2">
+        <div class="field-hint">Leave blank to use filename</div>
+      </div>
+      <div class="field-group">
+        <label>Document Type</label>
+        <select name="doc_type">
+          <option value="LPA">LPA (Limited Partnership Agreement)</option>
+          <option value="Presentation">Presentation / Deck</option>
+          <option value="Policy">Policy</option>
+          <option value="Memo">Memo / Advisory</option>
+          <option value="Tax">Tax Document</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>File</label>
+        <input type="file" name="file" accept=".pdf,.docx,.doc,.txt,.md" required>
+        <div class="field-hint">Supported: PDF, DOCX, TXT, Markdown</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-outline" onclick="document.getElementById('uploadModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Upload & Index</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if user.role == 'admin' %}
+<script>
+async function bulkIngest() {
+  if (!confirm('Ingest all files from the /documents folder?')) return;
+  const r = await fetch('/api/ingest-folder', {method:'POST'});
+  const data = await r.json();
+  const summary = data.results.map(x => `${x.file}: ${x.status}`).join('\n');
+  alert('Ingest complete:\n' + summary);
+  location.reload();
+}
+</script>
+{% endif %}
+{% endblock %}

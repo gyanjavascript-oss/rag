@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}vcurd{% endblock %} | {{ fund_name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    .nav-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 18px; height: 18px; border-radius: 9px;
+      background: #dc3545; color: #fff;
+      font-size: .65rem; font-weight: 700; padding: 0 5px;
+      margin-left: auto; animation: badgePulse 2s infinite;
+    }
+    @keyframes badgePulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+    .nav-item { display: flex; align-items: center; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <span class="logo-icon">◈</span>
+        <div>
+          <div class="logo-title">vcurd</div>
+          <div class="logo-sub">{{ fund_name }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-nav">
+      <a href="{{ url_for('dashboard') }}" class="nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+        <span class="nav-icon">⊞</span> Dashboard
+      </a>
+      <a href="{{ url_for('chat_list') }}" class="nav-item {% if request.endpoint in ['chat_list','chat_view'] %}active{% endif %}">
+        <span class="nav-icon">◎</span> Q&amp;A Sessions
+      </a>
+      <a href="{{ url_for('documents') }}" class="nav-item {% if request.endpoint == 'documents' %}active{% endif %}">
+        <span class="nav-icon">◫</span> Fund Documents
+      </a>
+      <a href="{{ url_for('investors') }}" class="nav-item {% if request.endpoint in ['investors','investor_detail'] %}active{% endif %}">
+        <span class="nav-icon">◷</span> Investors
+      </a>
+      <a href="{{ url_for('agent_handovers') }}" class="nav-item {% if request.endpoint in ['agent_handovers','agent_handover_chat'] %}active{% endif %}" id="handoverNavItem">
+        <span class="nav-icon">⚑</span> Live Support
+        <span class="nav-badge" id="handoverBadge" style="display:none;">0</span>
+      </a>
+      <a href="{{ url_for('analytics') }}" class="nav-item {% if request.endpoint == 'analytics' %}active{% endif %}">
+        <span class="nav-icon">◈</span> Analytics
+      </a>
+      {% if user.role == 'admin' %}
+      <a href="{{ url_for('team') }}" class="nav-item {% if request.endpoint == 'team' %}active{% endif %}">
+        <span class="nav-icon">◉</span> Team
+      </a>
+      {% endif %}
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="user-avatar">{{ user.name[0] }}</div>
+        <div>
+          <div class="user-name">{{ user.name }}</div>
+          <div class="user-role">{{ user.role }}</div>
+        </div>
+      </div>
+      <a href="{{ url_for('logout') }}" class="logout-btn">Sign out</a>
+    </div>
+  </nav>
+
+  <main class="main-content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-container">
+          {% for cat, msg in messages %}
+            <div class="flash flash-{{ cat }}">{{ msg }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  <script>
+    // Poll for pending handover count every 10s
+    function pollHandoverCount() {
+      fetch("{{ url_for('api_pending_count') }}")
+        .then(r => r.json())
+        .then(data => {
+          const badge = document.getElementById("handoverBadge");
+          if (badge) {
+            if (data.count > 0) {
+              badge.textContent = data.count;
+              badge.style.display = "inline-flex";
+            } else {
+              badge.style.display = "none";
+            }
+          }
+        })
+        .catch(() => {});
+    }
+    pollHandoverCount();
+    setInterval(pollHandoverCount, 10000);
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

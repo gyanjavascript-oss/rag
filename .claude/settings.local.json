@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(claude-api)",
+      "Bash(chmod:*)",
+      "Bash(python3:*)",
+      "Bash(venv/bin/pip install:*)",
+      "Bash(venv/bin/python -c \"\nimport database as db\ndb.init_db\\(\\)\nstats = db.get_dashboard_stats\\(\\)\nprint\\('DB stats:', stats\\)\ndocs = db.list_fund_documents\\(\\)\nprint\\('Documents:', len\\(docs\\)\\)\nfor d in docs:\n    print\\(f'  - {d[\\\\\"name\\\\\"]} \\({d[\\\\\"doc_type\\\\\"]}\\) — chunks: N/A'\\)\n\" 2>&1)",
+      "Bash(venv/bin/python -c \"\nfrom database import get_messages, get_conversation\nconv = get_conversation\\(1\\)\nprint\\('Conversation:', conv\\)\nmsgs = get_messages\\(1\\)\nprint\\('Messages:', len\\(msgs\\)\\)\nfor m in msgs:\n    print\\(f'  [{m[\\\\\"role\\\\\"]}]: {m[\\\\\"content\\\\\"][:80]}'\\)\n    if m.get\\('sources'\\):\n        print\\(f'    sources: {m[\\\\\"sources\\\\\"]}'\\)\n\" 2>&1)",
+      "Bash(venv/bin/python -c \"\nfrom agent import answer_question\nresult = answer_question\\(\n    question='What does the HR security policy say about personnel responsibilities?',\n    conversation_history=[],\n\\)\nprint\\('Answer:', result['answer'][:200]\\)\nprint\\('Sources:', result['sources']\\)\nprint\\('Themes:', result['themes']\\)\nprint\\('Confidence:', result['confidence']\\)\n\" 2>&1)",
+      "Bash(venv/bin/python -c \"\nfrom dotenv import load_dotenv; load_dotenv\\(\\)\nfrom agent import answer_question\nresult = answer_question\\(\n    question='What does the HR security policy say about personnel responsibilities?',\n    conversation_history=[],\n\\)\nprint\\('Answer:', result['answer'][:300]\\)\nprint\\('Sources:', result['sources']\\)\nprint\\('Themes:', result['themes']\\)\nprint\\('Confidence:', result['confidence']\\)\n\" 2>&1)",
+      "Bash(venv/bin/python -c \"\nfrom dotenv import load_dotenv; load_dotenv\\(\\)\nfrom agent import answer_question\n\nresult = answer_question\\(\n    question='What does the HR security policy say about personnel responsibilities?',\n    conversation_history=[],\n\\)\nprint\\('Answer:', result['answer'][:400]\\)\nprint\\(\\)\nprint\\('Sources:', result['sources']\\)\nprint\\(\\)\nprint\\('Themes:', result['themes']\\)\nprint\\('Confidence:', result['confidence']\\)\n\" 2>&1)",
+      "Bash(lsof -ti:5000)",
+      "Bash(xargs kill:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(python -c \"import database; database.init_db\\(\\); print\\(''DB OK''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import database; print\\(''All imports OK''\\)\")",
+      "Bash(python -m py_compile database.py app.py agent.py)",
+      "Bash(grep -rn \"Apex Growth Fund III\\\\|FUND_NAME\\\\|fund_name\" /Users/gyan/Documents/RAgdata/ --include=*.py --include=*.env --include=*.cfg --include=*.ini)",
+      "Bash(head -10 grep -n \"def dashboard\\\\|route.*admin\" /Users/gyan/Documents/RAgdata/app.py)",
+      "Bash(python -m py_compile app.py)",
+      "Bash(git init:*)",
+      "Bash(git remote:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

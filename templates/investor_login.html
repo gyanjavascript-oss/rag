@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Investor Portal | {{ fund_name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="login-body">
+  <div class="login-container">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-logo">◈</div>
+        <h1>{{ fund_name }}</h1>
+        <p>Investor Due Diligence Portal</p>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for cat, msg in messages %}
+            <div class="flash flash-{{ cat }}">{{ msg }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <form method="POST" class="login-form">
+        <div class="field-group">
+          <label>Email address</label>
+          <input type="email" name="email" placeholder="you@example.com" required autofocus>
+        </div>
+        <div class="field-group">
+          <label>Password</label>
+          <input type="password" name="password" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn-primary btn-full">Access Portal</button>
+      </form>
+
+      <div class="login-hint" style="margin-top:1.5rem;">
+        Your login credentials were provided by the fund team.
+        <br>If you need access, please contact your relationship manager.
+      </div>
+    </div>
+  </div>
+</body>
+</html>

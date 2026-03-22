@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Live Support{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Live Support — Handover Queue</h1>
+  <p class="page-sub">Investors who need human assistance. Claim a conversation to start chatting.</p>
+</div>
+
+{% if handovers %}
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Investor</th>
+        <th>Conversation</th>
+        <th>Reason</th>
+        <th>Requested</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in handovers %}
+      <tr>
+        <td>
+          <strong>{{ h.investor_name or 'Unknown' }}</strong>
+          {% if h.investor_entity %}<br><span style="color:var(--muted);font-size:.8rem;">{{ h.investor_entity }}</span>{% endif %}
+        </td>
+        <td>{{ h.conv_title or 'Untitled' }}</td>
+        <td style="max-width:220px;font-size:.85rem;color:var(--muted);">{{ h.reason or '—' }}</td>
+        <td style="font-size:.85rem;">{{ h.requested_at[:16].replace('T',' ') if h.requested_at else '' }}</td>
+        <td>
+          {% if h.status == 'pending' %}
+            <span class="type-badge" style="background:#fff3cd;color:#856404;">Waiting</span>
+          {% elif h.status == 'claimed' %}
+            <span class="type-badge" style="background:#d4edda;color:#155724;">Active — {{ h.claimed_by_name or '' }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if h.status == 'pending' %}
+          <form method="POST" action="{{ url_for('agent_claim_handover', handover_id=h.id) }}" style="display:inline;">
+            <button class="btn-primary btn-sm">Claim &amp; Chat</button>
+          </form>
+          {% elif h.status == 'claimed' %}
+          <a href="{{ url_for('agent_handover_chat', handover_id=h.id) }}" class="btn-outline btn-sm">Open Chat</a>
+          {% endif %}
+          <form method="POST" action="{{ url_for('agent_resolve_handover', handover_id=h.id) }}" style="display:inline;margin-left:.3rem;">
+            <button class="btn-outline btn-sm" style="color:var(--muted);" onclick="return confirm('Mark this as resolved?')">Resolve</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <div class="empty-state" style="padding:3rem;">
+    <div style="font-size:2.5rem;opacity:.2;margin-bottom:1rem;">⚑</div>
+    <h3 style="margin-bottom:.5rem;">No pending handovers</h3>
+    <p style="color:var(--muted);">When investors request human assistance, they'll appear here.</p>
+  </div>
+</div>
+{% endif %}
+
+<script>
+// Auto-refresh every 15s
+setTimeout(() => location.reload(), 15000);
+</script>
+{% endblock %}

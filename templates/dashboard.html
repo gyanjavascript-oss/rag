@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-sub">Overview of due diligence activity</p>
+  </div>
+  <a href="{{ url_for('chat_list') }}" class="btn-primary">+ New Q&amp;A Session</a>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.total_questions }}</div>
+    <div class="stat-label">Questions Answered</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.total_conversations }}</div>
+    <div class="stat-label">Q&amp;A Sessions</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.total_investors }}</div>
+    <div class="stat-label">Investor Prospects</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.total_documents }}</div>
+    <div class="stat-label">Fund Documents</div>
+    <div class="stat-sub">{{ stats.total_chunks }} indexed sections</div>
+  </div>
+</div>
+
+<div class="two-col">
+
+  <!-- Recent Questions -->
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Recent Questions</h2>
+      <a href="{{ url_for('analytics') }}" class="card-link">View all →</a>
+    </div>
+    {% if recent_questions %}
+      <div class="question-list">
+        {% for q in recent_questions %}
+        <div class="question-item">
+          <div class="question-text">{{ q.question[:120] }}{% if q.question|length > 120 %}…{% endif %}</div>
+          <div class="question-meta">
+            {% if q.investor_name %}<span class="tag tag-investor">{{ q.investor_name }}</span>{% endif %}
+            {% for theme in q.themes[:2] %}
+              <span class="tag">{{ theme }}</span>
+            {% endfor %}
+            <span class="time">{{ q.created_at[:10] }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <p>No questions yet. <a href="{{ url_for('chat_list') }}">Start a session</a> to ask questions.</p>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Right column -->
+  <div class="stack">
+
+    <!-- Topic Themes -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Top Topics</h2>
+        <a href="{{ url_for('analytics') }}" class="card-link">Full analytics →</a>
+      </div>
+      {% if themes %}
+        <div class="theme-bars">
+          {% set max_count = themes[0].count %}
+          {% for t in themes[:8] %}
+          <div class="theme-row">
+            <div class="theme-label">{{ t.theme }}</div>
+            <div class="theme-bar-wrap">
+              <div class="theme-bar" style="width:{{ (t.count / max_count * 100)|int }}%"></div>
+            </div>
+            <div class="theme-count">{{ t.count }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state"><p>No topic data yet.</p></div>
+      {% endif %}
+    </div>
+
+    <!-- Recent Sessions -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Recent Sessions</h2>
+        <a href="{{ url_for('chat_list') }}" class="card-link">All sessions →</a>
+      </div>
+      {% if recent_conversations %}
+        {% for c in recent_conversations %}
+        <a href="{{ url_for('chat_view', conv_id=c.id) }}" class="conv-row">
+          <div class="conv-title">{{ c.title or 'Untitled Session' }}</div>
+          <div class="conv-meta">
+            {% if c.investor_name %}<span class="tag tag-sm tag-investor">{{ c.investor_name }}</span>{% endif %}
+            <span class="count">{{ c.message_count }} msgs</span>
+            <span class="time">{{ c.updated_at[:10] if c.updated_at else '' }}</span>
+          </div>
+        </a>
+        {% endfor %}
+      {% else %}
+        <div class="empty-state"><p>No sessions yet.</p></div>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+
+<!-- Document Coverage -->
+{% if doc_stats %}
+<div class="card mt-4">
+  <div class="card-header">
+    <h2 class="card-title">Most Referenced Documents</h2>
+  </div>
+  <div class="doc-stat-grid">
+    {% for d in doc_stats %}
+    <div class="doc-stat-item">
+      <div class="doc-stat-name">{{ d.name }}</div>
+      <div class="doc-stat-type">{{ d.doc_type }}</div>
+      <div class="doc-stat-count">{{ d.citation_count }} references</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

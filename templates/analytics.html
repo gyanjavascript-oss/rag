@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Analytics{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Analytics &amp; Insights</h1>
+    <p class="page-sub">Understand what investors are asking and where documentation may have gaps.</p>
+  </div>
+</div>
+
+<!-- Stats row -->
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.total_questions }}</div>
+    <div class="stat-label">Total Questions</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ themes | length }}</div>
+    <div class="stat-label">Distinct Topics</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.total_investors }}</div>
+    <div class="stat-label">Investor Prospects</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.total_documents }}</div>
+    <div class="stat-label">Fund Documents</div>
+  </div>
+</div>
+
+<div class="two-col">
+
+  <!-- Topic frequency -->
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Questions by Topic</h2>
+    </div>
+    {% if themes %}
+    <div class="theme-bars theme-bars-lg">
+      {% set max_count = themes[0].count %}
+      {% for t in themes %}
+      <div class="theme-row">
+        <div class="theme-label">{{ t.theme }}</div>
+        <div class="theme-bar-wrap">
+          <div class="theme-bar" style="width:{{ (t.count / max_count * 100)|int }}%"></div>
+        </div>
+        <div class="theme-count">{{ t.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div style="padding:1rem 1.5rem;color:var(--muted);font-size:.85rem;">
+      These themes are automatically extracted from investor questions.
+    </div>
+    {% else %}
+    <div class="empty-state"><p>No topic data yet. Ask some questions to see analytics.</p></div>
+    {% endif %}
+  </div>
+
+  <!-- Right column -->
+  <div class="stack">
+
+    <!-- Most referenced docs -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Most Referenced Documents</h2>
+      </div>
+      {% if doc_stats %}
+      {% for d in doc_stats %}
+      <div class="doc-cite-row">
+        <div>
+          <div class="doc-cite-name">{{ d.name }}</div>
+          <span class="type-badge type-{{ d.doc_type|lower }}">{{ d.doc_type }}</span>
+        </div>
+        <div class="doc-cite-count">{{ d.citation_count }}×</div>
+      </div>
+      {% endfor %}
+      {% else %}
+      <div class="empty-state"><p>No citation data yet.</p></div>
+      {% endif %}
+    </div>
+
+    <!-- Insights callout -->
+    <div class="card insight-card">
+      <div class="card-header">
+        <h2 class="card-title">Insights</h2>
+      </div>
+      <div class="insight-list">
+        {% if themes %}
+        <div class="insight-item">
+          <div class="insight-icon">🔍</div>
+          <div>
+            <strong>Top investor concern:</strong> "{{ themes[0].theme }}" has been asked {{ themes[0].count }} time{{ 's' if themes[0].count > 1 else '' }}.
+          </div>
+        </div>
+        {% endif %}
+        {% if stats.total_questions > 0 and stats.total_documents > 0 %}
+        <div class="insight-item">
+          <div class="insight-icon">📄</div>
+          <div>
+            <strong>{{ stats.total_documents }} documents</strong> indexed across {{ stats.total_chunks }} sections to answer {{ stats.total_questions }} question{{ 's' if stats.total_questions > 1 else '' }}.
+          </div>
+        </div>
+        {% endif %}
+        <div class="insight-item">
+          <div class="insight-icon">💡</div>
+          <div>
+            Review frequently asked topics to identify where existing documentation may need clarification or expansion.
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- All Questions Log -->
+<div class="card mt-4">
+  <div class="card-header">
+    <h2 class="card-title">Question Log</h2>
+    <div style="color:var(--muted);font-size:.85rem;">{{ recent_questions | length }} most recent</div>
+  </div>
+  {% if recent_questions %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Question</th>
+        <th>Topics</th>
+        <th>Investor</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for q in recent_questions %}
+      <tr>
+        <td>
+          <div class="question-text">{{ q.question[:120] }}{% if q.question|length > 120 %}…{% endif %}</div>
+        </td>
+        <td>
+          {% for t in q.themes[:3] %}
+          <span class="tag tag-sm">{{ t }}</span>
+          {% endfor %}
+        </td>
+        <td>{{ q.investor_name or '—' }}</td>
+        <td>{{ q.created_at[:10] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state"><p>No questions logged yet.</p></div>
+  {% endif %}
+</div>
+{% endblock %}

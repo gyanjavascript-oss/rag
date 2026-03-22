@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% if active_conv %}{{ active_conv.title or 'My Questions' }}{% else %}Investor Portal{% endif %} | {{ fund_name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    body { margin: 0; font-family: var(--font, -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif); background: var(--bg); color: var(--text); }
+    :root { --font: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+    .portal-layout { display: grid; grid-template-columns: 280px 1fr 300px; height: 100vh; overflow: hidden; }
+
+    /* Sidebar */
+    .portal-sidebar { background: #0f1f3d; color: #fff; display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,.1); }
+    .portal-sidebar-header { padding: 1.5rem 1.25rem 1rem; border-bottom: 1px solid rgba(255,255,255,.1); }
+    .portal-logo { display: flex; align-items: center; gap: .6rem; margin-bottom: .5rem; }
+    .portal-logo-icon { font-size: 1.4rem; color: #c9a84c; }
+    .portal-logo-title { font-size: 1rem; font-weight: 700; }
+    .portal-logo-sub { font-size: .75rem; color: rgba(255,255,255,.5); }
+    .portal-investor-info { font-size: .82rem; color: rgba(255,255,255,.6); margin-top: .4rem; }
+    .portal-sidebar-section { padding: .75rem 1.25rem .25rem; font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.3); }
+    .portal-conv-list { flex: 1; overflow-y: auto; }
+    .portal-conv-item { display: flex; align-items: center; gap: .5rem; padding: .6rem 1.25rem; font-size: .84rem; color: rgba(255,255,255,.65); text-decoration: none; border-left: 3px solid transparent; transition: background .15s; }
+    .portal-conv-item:hover { background: rgba(255,255,255,.07); color: #fff; text-decoration: none; }
+    .portal-conv-item.active { background: rgba(201,168,76,.15); border-left-color: #c9a84c; color: #fff; }
+    .portal-conv-title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .portal-conv-date { font-size: .7rem; color: rgba(255,255,255,.3); }
+    .portal-new-btn { margin: .6rem 1.25rem; display: flex; align-items: center; justify-content: center; padding: .5rem; border-radius: 6px; background: rgba(201,168,76,.2); border: 1px solid rgba(201,168,76,.4); color: #c9a84c; font-size: .875rem; font-weight: 600; cursor: pointer; text-decoration: none; }
+    .portal-new-btn:hover { background: rgba(201,168,76,.3); text-decoration: none; }
+    .portal-doc-list { padding: 0 1.25rem .5rem; }
+    .portal-doc-item { display: flex; align-items: center; gap: .4rem; padding: .28rem 0; font-size: .78rem; color: rgba(255,255,255,.5); border-bottom: 1px solid rgba(255,255,255,.05); }
+    .portal-doc-dot { width: 5px; height: 5px; border-radius: 50%; background: #c9a84c; flex-shrink: 0; }
+    .portal-sidebar-footer { padding: 1rem 1.25rem; border-top: 1px solid rgba(255,255,255,.1); display: flex; align-items: center; gap: .6rem; }
+    .portal-user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #c9a84c; color: #0f1f3d; display: flex; align-items: center; justify-content: center; font-size: .8rem; font-weight: 700; flex-shrink: 0; }
+    .portal-user-name { font-size: .85rem; font-weight: 600; flex: 1; }
+    .portal-logout { font-size: .78rem; color: rgba(255,255,255,.4); text-decoration: none; }
+    .portal-logout:hover { color: rgba(255,255,255,.7); }
+
+    /* Main */
+    .portal-main { display: flex; flex-direction: column; overflow: hidden; }
+    .portal-chat-header { padding: 1rem 1.5rem; border-bottom: 1px solid #dde1ed; background: #fff; display: flex; align-items: center; gap: 1rem; }
+    .portal-chat-title { font-size: .95rem; font-weight: 600; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+    .portal-messages { flex: 1; overflow-y: auto; padding: 1.25rem 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
+    .portal-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #6b7a99; padding: 2rem; }
+    .portal-empty-icon { font-size: 3rem; opacity: .25; margin-bottom: 1rem; }
+    .portal-empty-title { font-size: 1.1rem; font-weight: 600; color: #1a2433; margin-bottom: .5rem; }
+
+    /* Messages */
+    .msg-bubble { max-width: 100%; }
+    .msg-bubble.user { align-self: flex-end; }
+    .msg-bubble.assistant, .msg-bubble.human_agent { align-self: flex-start; }
+    .msg-bubble.system { align-self: center; max-width: 80%; }
+    .msg-content { padding: .8rem 1rem; border-radius: 12px; font-size: .875rem; line-height: 1.6; }
+    .msg-bubble.user .msg-content { background: #0f1f3d; color: #fff; border-bottom-right-radius: 4px; }
+    .msg-bubble.assistant .msg-content { background: #f5f6fa; border: 1px solid #dde1ed; border-bottom-left-radius: 4px; }
+    .msg-bubble.human_agent .msg-content { background: #e8f4fd; border: 1px solid #b3d9f7; border-bottom-left-radius: 4px; }
+    .msg-bubble.system .msg-content { background: #fff8e1; border: 1px solid #ffe082; color: #6d4c00; font-size: .82rem; font-style: italic; text-align: center; border-radius: 8px; }
+    .msg-meta { font-size: .7rem; color: #6b7a99; margin-top: .2rem; padding: 0 .2rem; }
+    .msg-bubble.user .msg-meta { text-align: right; }
+    .msg-agent-label { display: inline-flex; align-items: center; gap: .3rem; font-size: .72rem; font-weight: 600; color: #1565c0; margin-bottom: .1rem; }
+    .msg-agent-label::before { content: '👤'; font-size: .8rem; }
+
+    /* Handover UI */
+    .handover-banner {
+      margin: .5rem 0; padding: 1rem 1.25rem;
+      background: #fff8e1; border: 1px solid #ffca28; border-radius: 10px;
+      display: flex; align-items: center; gap: 1rem;
+    }
+    .handover-banner-icon { font-size: 1.5rem; flex-shrink: 0; }
+    .handover-banner-text { flex: 1; font-size: .875rem; color: #5d4037; }
+    .handover-banner-text strong { display: block; margin-bottom: .2rem; }
+    .btn-handover {
+      padding: .5rem 1rem; background: #1565c0; color: #fff;
+      border: none; border-radius: 6px; font-size: .82rem; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+    }
+    .btn-handover:hover { background: #0d47a1; }
+    .btn-handover:disabled { opacity: .6; cursor: not-allowed; }
+
+    .waiting-banner {
+      padding: .875rem 1.25rem; background: #e3f2fd; border: 1px solid #90caf9;
+      border-radius: 10px; display: flex; align-items: center; gap: .75rem;
+      font-size: .875rem; color: #0d47a1;
+    }
+    .waiting-dot { width: 10px; height: 10px; border-radius: 50%; background: #1565c0; animation: blink 1.2s infinite; flex-shrink: 0; }
+    @keyframes blink { 0%,100%{opacity:.3} 50%{opacity:1} }
+
+    /* Status bubble */
+    .status-bubble { display: flex; align-items: center; gap: .5rem; font-size: .82rem; color: #6b7a99; padding: .3rem 0; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #c9a84c; animation: blink 1.2s infinite; }
+
+    /* Confidence badge */
+    .conf-badge { display: inline-block; padding: .15rem .45rem; border-radius: 4px; font-size: .68rem; font-weight: 700; text-transform: uppercase; }
+    .conf-high { background: #d4edda; color: #155724; }
+    .conf-medium { background: #fff3cd; color: #856404; }
+    .conf-low { background: #f8d7da; color: #721c24; }
+
+    /* Input */
+    .portal-input-area { padding: .875rem 1.5rem 1rem; border-top: 1px solid #dde1ed; background: #fff; }
+    .portal-input-row { display: flex; gap: .65rem; align-items: flex-end; }
+    #portalQuestion { flex: 1; padding: .7rem .9rem; border-radius: 8px; border: 1px solid #dde1ed; background: #f5f6fa; font-size: .875rem; font-family: inherit; color: #1a2433; resize: none; line-height: 1.5; min-height: 42px; max-height: 130px; }
+    #portalQuestion:focus { outline: none; border-color: #0f1f3d; }
+    #portalSendBtn { padding: .6rem 1.1rem; background: #0f1f3d; color: #fff; border: none; border-radius: 8px; font-size: .875rem; font-weight: 600; cursor: pointer; }
+    #portalSendBtn:hover { background: #1a2a45; }
+    #portalSendBtn:disabled { opacity: .5; cursor: not-allowed; }
+    .portal-input-hint { font-size: .72rem; color: #6b7a99; margin-top: .35rem; }
+
+    /* Sources panel */
+    .portal-sources { background: #fff; border-left: 1px solid #dde1ed; display: flex; flex-direction: column; overflow: hidden; }
+    .portal-sources-header { padding: 1rem 1.25rem; border-bottom: 1px solid #dde1ed; font-size: .875rem; font-weight: 600; }
+    .portal-sources-body { flex: 1; overflow-y: auto; padding: 1rem 1.25rem; }
+    .source-card { border: 1px solid #dde1ed; border-radius: 8px; padding: .875rem; margin-bottom: .75rem; font-size: .82rem; }
+    .source-doc { font-weight: 600; color: #0f1f3d; margin-bottom: .25rem; }
+    .source-section { color: #6b7a99; font-size: .78rem; margin-bottom: .35rem; }
+    .source-excerpt { color: #1a2433; line-height: 1.5; font-style: italic; }
+    .portal-sources-empty { color: #6b7a99; font-size: .85rem; text-align: center; padding: 1rem 0; }
+  </style>
+</head>
+<body>
+<div class="portal-layout">
+
+  <!-- Sidebar -->
+  <aside class="portal-sidebar">
+    <div class="portal-sidebar-header">
+      <div class="portal-logo">
+        <span class="portal-logo-icon">◈</span>
+        <div>
+          <div class="portal-logo-title">{{ fund_name }}</div>
+          <div class="portal-logo-sub">Investor Portal</div>
+        </div>
+      </div>
+      {% if investor_session %}
+      <div class="portal-investor-info">{{ investor_session.investor_name }}{% if investor_session.investor_entity %} · {{ investor_session.investor_entity }}{% endif %}</div>
+      {% endif %}
+    </div>
+
+    <form method="POST" action="{{ url_for('investor_new_chat') }}" style="margin:.6rem 1.25rem 0;">
+      <button type="submit" class="portal-new-btn" style="width:100%;border:none;">+ New Thread</button>
+    </form>
+
+    <div class="portal-sidebar-section">My Threads</div>
+    <div class="portal-conv-list">
+      {% if conversations %}
+        {% for c in conversations %}
+        <a href="{{ url_for('investor_chat_view', conv_id=c.id) }}"
+           class="portal-conv-item {% if active_conv and active_conv.id == c.id %}active{% endif %}">
+          <span class="portal-conv-title">{{ c.title or 'Thread' }}</span>
+          <span class="portal-conv-date">{{ c.updated_at[:10] if c.updated_at else '' }}</span>
+        </a>
+        {% endfor %}
+      {% else %}
+        <div style="padding:.75rem 1.25rem;font-size:.8rem;color:rgba(255,255,255,.3);">No threads yet</div>
+      {% endif %}
+    </div>
+
+    {% if assigned_docs %}
+    <div class="portal-sidebar-section">Available Documents</div>
+    <div class="portal-doc-list">
+      {% for d in assigned_docs %}
+      <div class="portal-doc-item">
+        <span class="portal-doc-dot"></span>
+        <span>{{ d.name }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="portal-sidebar-footer">
+      <div class="portal-user-avatar">{{ investor.name[0] if investor.name else 'I' }}</div>
+      <div class="portal-user-name">{{ investor.name }}</div>
+      <a href="{{ url_for('investor_logout') }}" class="portal-logout">Sign out</a>
+    </div>
+  </aside>
+
+  <!-- Main chat -->
+  <main class="portal-main">
+    {% if active_conv %}
+    <div class="portal-chat-header">
+      <div>
+        <div class="portal-chat-title">{{ active_conv.title or 'Question Thread' }}</div>
+      </div>
+      {% set conv_status = active_conv.get('status', 'active') if active_conv is mapping else 'active' %}
+    </div>
+
+    <div class="portal-messages" id="portalMessages">
+      {% if messages %}
+        {% for m in messages %}
+          {% if m.role == 'human_agent' %}
+          <div class="msg-bubble human_agent" data-id="{{ m.id }}">
+            <div class="msg-agent-label">Fund Team</div>
+            <div class="msg-content">{{ m.content }}</div>
+            <div class="msg-meta">Fund Team · {{ m.created_at[11:16] if m.created_at else '' }}</div>
+          </div>
+          {% elif m.role == 'system' %}
+          <div class="msg-bubble system" data-id="{{ m.id }}">
+            <div class="msg-content">{{ m.content }}</div>
+          </div>
+          {% else %}
+          <div class="msg-bubble {{ m.role }}" data-id="{{ m.id }}"
+               {% if m.role == 'assistant' %}data-sources='{{ m.sources | tojson }}'
+               data-confidence="{{ m.confidence if m.confidence else '' }}"{% endif %}>
+            <div class="msg-content">{{ m.content }}</div>
+            <div class="msg-meta">
+              {% if m.role == 'user' %}You
+              {% else %}AI Assistant{% if m.sources %} · {{ m.sources|length }} source{% if m.sources|length != 1 %}s{% endif %}{% endif %}
+              {% endif %}
+              · {{ m.created_at[11:16] if m.created_at else '' }}
+            </div>
+          </div>
+          {% endif %}
+        {% endfor %}
+      {% else %}
+      <div class="portal-empty-state" id="emptyState">
+        <div class="portal-empty-icon">◎</div>
+        <div class="portal-empty-title">Start asking questions</div>
+        <div style="font-size:.875rem;max-width:340px;">Type your due diligence question below. Answers come directly from your assigned fund documents.</div>
+      </div>
+      {% endif %}
+
+      <!-- Handover / waiting state injected by JS -->
+    </div>
+
+    <div class="portal-input-area" id="inputArea">
+      <div class="portal-input-row">
+        <textarea id="portalQuestion" placeholder="Ask a question about the fund…" rows="1"></textarea>
+        <button id="portalSendBtn" onclick="sendQuestion()">Send</button>
+      </div>
+      <div class="portal-input-hint">Answers are sourced from official fund documents only.</div>
+    </div>
+
+    {% else %}
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3rem;text-align:center;">
+      <div style="font-size:3rem;opacity:.15;margin-bottom:1.5rem;">◈</div>
+      <h2 style="font-size:1.35rem;font-weight:700;margin:0 0 .75rem;">Welcome, {{ investor.name }}</h2>
+      <p style="color:#6b7a99;max-width:420px;margin:0 0 2rem;line-height:1.65;">
+        Use this portal to ask due diligence questions about {{ fund_name }}. All answers are sourced from your assigned fund documents.
+      </p>
+      <form method="POST" action="{{ url_for('investor_new_chat') }}">
+        <button type="submit" class="btn-primary" style="padding:.75rem 2rem;font-size:1rem;">Start a Question Thread</button>
+      </form>
+      {% if assigned_docs %}
+      <p style="margin-top:2rem;color:#6b7a99;font-size:.85rem;">You have access to {{ assigned_docs|length }} fund document{% if assigned_docs|length != 1 %}s{% endif %}.</p>
+      {% else %}
+      <p style="margin-top:2rem;color:#6b7a99;font-size:.85rem;">No documents assigned yet — contact the fund team.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </main>
+
+  <!-- Sources panel -->
+  <aside class="portal-sources">
+    <div class="portal-sources-header">Source Documents</div>
+    <div class="portal-sources-body" id="portalSources">
+      <div class="portal-sources-empty">Sources will appear here after each answer.</div>
+    </div>
+  </aside>
+
+</div>
+
+{% if active_conv %}
+<script>
+const CONV_ID = {{ active_conv.id }};
+const STREAM_URL = "{{ url_for('investor_chat_stream', conv_id=active_conv.id) }}";
+const HANDOVER_URL = "{{ url_for('investor_request_handover', conv_id=active_conv.id) }}";
+const POLL_URL = "{{ url_for('investor_chat_poll', conv_id=active_conv.id) }}";
+
+const messagesEl = document.getElementById("portalMessages");
+const sourcesEl = document.getElementById("portalSources");
+const questionEl = document.getElementById("portalQuestion");
+const sendBtn = document.getElementById("portalSendBtn");
+
+let convStatus = "{{ active_conv.get('status', 'active') if active_conv is mapping else 'active' }}";
+let pollInterval = null;
+let lastMessageId = 0;
+
+// Find last message id from rendered messages
+document.querySelectorAll(".msg-bubble[data-id]").forEach(el => {
+  const id = parseInt(el.dataset.id || 0);
+  if (id > lastMessageId) lastMessageId = id;
+});
+
+// Auto-resize textarea
+questionEl.addEventListener("input", () => {
+  questionEl.style.height = "auto";
+  questionEl.style.height = Math.min(questionEl.scrollHeight, 130) + "px";
+});
+questionEl.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
+});
+
+function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+scrollBottom();
+
+// Show sources from last assistant message on load
+(function loadLastSources() {
+  const bubbles = [...document.querySelectorAll(".msg-bubble.assistant[data-sources]")];
+  if (!bubbles.length) return;
+  try { renderSources(JSON.parse(bubbles[bubbles.length - 1].dataset.sources || "[]")); } catch(e) {}
+})();
+
+// Disable input if already in handover
+if (convStatus === "pending_handover" || convStatus === "human_active") {
+  lockInput();
+  showWaitingBanner(convStatus === "human_active" ? "A fund team member has joined the conversation." : null);
+  startPolling();
+}
+
+function escHtml(t) {
+  return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function renderSources(sources) {
+  if (!sources || !sources.length) {
+    sourcesEl.innerHTML = '<div class="portal-sources-empty">No sources for this response.</div>';
+    return;
+  }
+  sourcesEl.innerHTML = sources.map(s => `
+    <div class="source-card">
+      <div class="source-doc">◫ ${escHtml(s.doc_name||'')}</div>
+      ${s.section ? `<div class="source-section">${escHtml(s.section)}</div>` : ""}
+      ${s.excerpt ? `<div class="source-excerpt">"${escHtml(s.excerpt.substring(0,220))}${s.excerpt.length>220?"…":""}"</div>` : ""}
+    </div>
+  `).join("");
+}
+
+function removeEmpty() {
+  const e = document.getElementById("emptyState");
+  if (e) e.remove();
+}
+
+function removeStatus() {
+  const e = document.getElementById("statusBubble");
+  if (e) e.remove();
+}
+
+function removeHandoverBanner() {
+  const e = document.getElementById("handoverBanner");
+  if (e) e.remove();
+}
+
+function removeWaitingBanner() {
+  const e = document.getElementById("waitingBanner");
+  if (e) e.remove();
+}
+
+function lockInput() {
+  sendBtn.disabled = true;
+  questionEl.disabled = true;
+  questionEl.placeholder = "Chat handed over to human agent…";
+}
+
+function unlockInput() {
+  sendBtn.disabled = false;
+  questionEl.disabled = false;
+  questionEl.placeholder = "Ask a question about the fund…";
+}
+
+function showHandoverBanner() {
+  removeHandoverBanner();
+  const div = document.createElement("div");
+  div.id = "handoverBanner";
+  div.className = "handover-banner";
+  div.innerHTML = `
+    <span class="handover-banner-icon">💬</span>
+    <div class="handover-banner-text">
+      <strong>Would you like to speak with a fund team member?</strong>
+      The AI couldn't fully answer your question. A human agent can help.
+    </div>
+    <button class="btn-handover" onclick="requestHandover(this)">Connect to Human Agent</button>
+  `;
+  messagesEl.appendChild(div);
+  scrollBottom();
+}
+
+function showWaitingBanner(msg) {
+  removeWaitingBanner();
+  const div = document.createElement("div");
+  div.id = "waitingBanner";
+  div.className = "waiting-banner";
+  div.innerHTML = `<span class="waiting-dot"></span>${escHtml(msg || "Waiting for a fund team member to join… You'll be notified here.")}`;
+  messagesEl.appendChild(div);
+  scrollBottom();
+}
+
+function requestHandover(btn) {
+  btn.disabled = true;
+  btn.textContent = "Connecting…";
+  fetch(HANDOVER_URL, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({reason: "Investor requested human assistance — AI gave low-confidence answer"})
+  })
+  .then(r => r.json())
+  .then(() => {
+    convStatus = "pending_handover";
+    removeHandoverBanner();
+    lockInput();
+    showWaitingBanner();
+    startPolling();
+  });
+}
+
+function addUserBubble(text) {
+  removeEmpty();
+  const div = document.createElement("div");
+  div.className = "msg-bubble user";
+  div.innerHTML = `<div class="msg-content">${escHtml(text)}</div><div class="msg-meta">You</div>`;
+  messagesEl.appendChild(div);
+  scrollBottom();
+}
+
+function addStatusBubble(text) {
+  let el = document.getElementById("statusBubble");
+  if (!el) { el = document.createElement("div"); el.id = "statusBubble"; el.className = "status-bubble"; messagesEl.appendChild(el); }
+  el.innerHTML = `<span class="status-dot"></span>${escHtml(text)}`;
+  scrollBottom();
+}
+
+function addAssistantBubble(data) {
+  removeStatus();
+  const conf = data.confidence || "medium";
+  const srcCount = (data.sources || []).length;
+  const div = document.createElement("div");
+  div.className = "msg-bubble assistant";
+  div.innerHTML = `
+    <div class="msg-content">${escHtml(data.answer||"")}</div>
+    <div class="msg-meta">AI Assistant${srcCount?` · ${srcCount} source${srcCount!==1?"s":""}`:""} · <span class="conf-badge conf-${conf}">${conf}</span></div>
+  `;
+  messagesEl.appendChild(div);
+  renderSources(data.sources || []);
+  scrollBottom();
+
+  // Show handover banner when confidence is low or answer has gaps and no sources
+  if (conf === "low" || (data.gaps && srcCount === 0)) {
+    setTimeout(showHandoverBanner, 600);
+  }
+}
+
+function addHumanAgentBubble(content, time) {
+  const div = document.createElement("div");
+  div.className = "msg-bubble human_agent";
+  div.innerHTML = `
+    <div class="msg-agent-label">Fund Team</div>
+    <div class="msg-content">${escHtml(content)}</div>
+    <div class="msg-meta">Fund Team · ${escHtml(time||"")}</div>
+  `;
+  messagesEl.appendChild(div);
+  scrollBottom();
+}
+
+function addSystemBubble(content) {
+  const div = document.createElement("div");
+  div.className = "msg-bubble system";
+  div.innerHTML = `<div class="msg-content">${escHtml(content)}</div>`;
+  messagesEl.appendChild(div);
+  scrollBottom();
+}
+
+function sendQuestion() {
+  const q = questionEl.value.trim();
+  if (!q || sendBtn.disabled) return;
+  removeHandoverBanner();
+  sendBtn.disabled = true;
+  questionEl.value = "";
+  questionEl.style.height = "auto";
+  addUserBubble(q);
+  addStatusBubble("Searching fund documents…");
+
+  const es = new EventSource(STREAM_URL + "?q=" + encodeURIComponent(q));
+  es.onmessage = evt => {
+    try {
+      const data = JSON.parse(evt.data);
+      if (data.type === "tool_call") {
+        addStatusBubble("Searching documents…");
+      } else if (data.type === "result") {
+        addAssistantBubble(data.data);
+        es.close();
+        sendBtn.disabled = false;
+        lastMessageId = lastMessageId + 2; // user + assistant
+      } else if (data.type === "error") {
+        removeStatus();
+        addSystemBubble("An error occurred. Please try again.");
+        es.close();
+        sendBtn.disabled = false;
+        showHandoverBanner();
+      }
+    } catch(e) {}
+  };
+  es.onerror = () => { removeStatus(); sendBtn.disabled = false; es.close(); };
+}
+
+// Polling for human agent messages
+function startPolling() {
+  if (pollInterval) return;
+  pollInterval = setInterval(pollMessages, 3000);
+}
+
+function stopPolling() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+}
+
+function pollMessages() {
+  fetch(POLL_URL + "?last_id=" + lastMessageId)
+    .then(r => r.json())
+    .then(data => {
+      // New messages from human agent
+      if (data.messages && data.messages.length) {
+        data.messages.forEach(m => {
+          if (m.id > lastMessageId) lastMessageId = m.id;
+          if (m.role === "human_agent") {
+            removeWaitingBanner();
+            addHumanAgentBubble(m.content, m.created_at ? m.created_at.substring(11,16) : "");
+          } else if (m.role === "system") {
+            addSystemBubble(m.content);
+          }
+        });
+      }
+      // Status changes
+      const newStatus = data.conv_status;
+      if (newStatus === "human_active" && convStatus !== "human_active") {
+        convStatus = "human_active";
+        removeWaitingBanner();
+        addSystemBubble("A fund team member has joined the conversation.");
+      } else if (newStatus === "active" && (convStatus === "pending_handover" || convStatus === "human_active")) {
+        convStatus = "active";
+        stopPolling();
+        unlockInput();
+        removeWaitingBanner();
+      }
+    })
+    .catch(() => {});
+}
+</script>
+{% endif %}
+</body>
+</html>

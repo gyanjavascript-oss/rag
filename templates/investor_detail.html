@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}{{ inv_session.investor_name }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="breadcrumb">
+    <a href="{{ url_for('investors') }}">Investors</a> /
+    <span>{{ inv_session.investor_name }}</span>
+  </div>
+</div>
+
+<div class="investor-detail-header">
+  <div class="inv-avatar inv-avatar-lg">{{ inv_session.investor_name[0] }}</div>
+  <div class="inv-detail-info">
+    <h1>{{ inv_session.investor_name }}</h1>
+    {% if inv_session.investor_entity %}
+    <div class="inv-entity">{{ inv_session.investor_entity }}</div>
+    {% endif %}
+    {% if inv_session.notes %}
+    <div class="inv-notes">{{ inv_session.notes }}</div>
+    {% endif %}
+    <div class="inv-meta">Created {{ inv_session.created_at[:10] }} by {{ inv_session.created_by_name }}</div>
+  </div>
+  <form method="POST" action="{{ url_for('start_investor_chat', session_id=inv_session.id) }}" style="margin-left:auto;">
+    <button class="btn-primary">+ Start DDQ Session</button>
+  </form>
+</div>
+
+<!-- Investor Portal Access -->
+<div class="card" style="margin-bottom:1.5rem;">
+  <div class="card-header">
+    <h2 class="card-title">Investor Portal Access</h2>
+    {% if investor_user %}
+    <span class="type-badge type-lpa" style="margin-left:auto;">Login Active: {{ investor_user.email }}</span>
+    {% endif %}
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;padding:1.5rem;">
+
+    <!-- Fund Doc Assignment -->
+    <div>
+      <h4 style="margin:0 0 .75rem;font-size:.95rem;color:var(--text);">Assign Fund Documents</h4>
+      <p style="font-size:.85rem;color:var(--muted);margin:0 0 .75rem;">Investor can only query documents you assign here.</p>
+
+      <!-- Category filter tabs -->
+      <div style="display:flex;gap:.35rem;flex-wrap:wrap;margin-bottom:.6rem;" id="catFilterBtns">
+        <button type="button" class="cat-filter-btn active" data-cat="all" onclick="filterDocCat('all')">All</button>
+        {% set seen_cats = [] %}
+        {% for d in all_fund_docs %}
+          {% if d.doc_type not in seen_cats %}
+            {% set _ = seen_cats.append(d.doc_type) %}
+            <button type="button" class="cat-filter-btn" data-cat="{{ d.doc_type }}" onclick="filterDocCat('{{ d.doc_type }}')">{{ d.doc_type }}</button>
+          {% endif %}
+        {% endfor %}
+        <button type="button" class="cat-filter-btn" data-cat="__check_all__" onclick="checkFilteredAll(true)" style="margin-left:auto;color:var(--navy);">✓ All</button>
+        <button type="button" class="cat-filter-btn" data-cat="__uncheck_all__" onclick="checkFilteredAll(false)" style="color:var(--muted);">✗ None</button>
+      </div>
+
+      <form method="POST" action="{{ url_for('assign_investor_docs', session_id=inv_session.id) }}">
+        <div style="max-height:210px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:.5rem;" id="docCheckList">
+          {% if all_fund_docs %}
+            {% for d in all_fund_docs %}
+            <label style="display:flex;align-items:center;gap:.6rem;padding:.35rem .5rem;cursor:pointer;border-radius:4px;"
+                   class="doc-check-row" data-cat="{{ d.doc_type }}">
+              <input type="checkbox" name="doc_ids" value="{{ d.id }}"
+                {% if d.id in assigned_doc_ids %}checked{% endif %}>
+              <span style="flex:1;font-size:.875rem;">{{ d.name }}</span>
+              <span class="type-badge type-{{ d.doc_type|lower }}" style="font-size:.7rem;">{{ d.doc_type }}</span>
+            </label>
+            {% endfor %}
+          {% else %}
+            <p style="color:var(--muted);font-size:.85rem;padding:.5rem;">No fund documents uploaded yet.</p>
+          {% endif %}
+        </div>
+        <button type="submit" class="btn-primary" style="margin-top:.75rem;width:100%;">Save Document Access</button>
+      </form>
+    </div>
+
+    <!-- Investor Login Credentials -->
+    <div>
+      <h4 style="margin:0 0 .75rem;font-size:.95rem;color:var(--text);">
+        {% if investor_user %}Update Login Credentials{% else %}Create Investor Login{% endif %}
+      </h4>
+      <p style="font-size:.85rem;color:var(--muted);margin:0 0 1rem;">
+        Give the investor a login to access their portal directly.
+        Portal URL: <strong>/investor/login</strong>
+      </p>
+      {% if user.role == 'admin' %}
+      <form method="POST" action="{{ url_for('create_investor_credentials', session_id=inv_session.id) }}">
+        <div class="field-group" style="margin-bottom:.75rem;">
+          <label style="font-size:.85rem;">Email</label>
+          <input type="email" name="email" placeholder="investor@example.com"
+                 value="{{ investor_user.email if investor_user else '' }}" required
+                 style="font-size:.875rem;">
+        </div>
+        <div class="field-group" style="margin-bottom:.75rem;">
+          <label style="font-size:.85rem;">Password</label>
+          <input type="password" name="password" placeholder="Set new password" required
+                 style="font-size:.875rem;">
+        </div>
+        <button type="submit" class="btn-primary" style="width:100%;">
+          {% if investor_user %}Update Credentials{% else %}Create Login{% endif %}
+        </button>
+      </form>
+      {% else %}
+      <p style="color:var(--muted);font-size:.85rem;">Admin access required to manage credentials.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="two-col">
+
+  <!-- Investor Documents -->
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Investor Documents</h2>
+      <button class="btn-outline btn-sm" onclick="document.getElementById('invUploadModal').style.display='flex'">
+        Upload
+      </button>
+    </div>
+    <p style="color:var(--muted);font-size:.9rem;padding:0 1.5rem .5rem;">
+      Upload the investor's own documents (entity structure, tax forms, side letter requests) for cross-referencing.
+    </p>
+
+    {% if inv_docs %}
+    <table class="data-table">
+      <thead>
+        <tr><th>Document</th><th>Type</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        {% for d in inv_docs %}
+        <tr>
+          <td>{{ d.name }}</td>
+          <td><span class="type-badge type-{{ d.doc_type|lower }}">{{ d.doc_type }}</span></td>
+          <td>{{ d.uploaded_at[:10] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+      <p>No investor documents uploaded yet.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- DDQ Sessions -->
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Q&amp;A Sessions</h2>
+    </div>
+    {% if conversations %}
+      {% for c in conversations %}
+      <a href="{{ url_for('chat_view', conv_id=c.id) }}" class="conv-row">
+        <div class="conv-title">{{ c.title or 'Untitled Session' }}</div>
+        <div class="conv-meta">
+          <span class="time">{{ c.updated_at[:10] if c.updated_at else '' }}</span>
+        </div>
+      </a>
+      {% endfor %}
+    {% else %}
+    <div class="empty-state">
+      <p>No sessions yet. Start a DDQ session to begin answering questions for this investor.</p>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- Upload Investor Doc Modal -->
+<div id="invUploadModal" class="modal-overlay" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Upload Investor Document</h3>
+      <button class="modal-close" onclick="document.getElementById('invUploadModal').style.display='none'">✕</button>
+    </div>
+    <form method="POST" action="{{ url_for('upload_investor_doc', session_id=inv_session.id) }}" enctype="multipart/form-data">
+      <div class="field-group">
+        <label>Document Name</label>
+        <input type="text" name="name" placeholder="e.g. Entity Structure Chart">
+      </div>
+      <div class="field-group">
+        <label>Document Type</label>
+        <select name="doc_type">
+          <option value="Entity Structure">Entity Structure</option>
+          <option value="Tax">Tax Document</option>
+          <option value="Side Letter">Side Letter Request</option>
+          <option value="KYC">KYC / AML</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>File</label>
+        <input type="file" name="file" accept=".pdf,.docx,.doc,.txt,.md" required>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-outline" onclick="document.getElementById('invUploadModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Upload</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<style>
+.doc-check-row:hover { background: var(--bg); }
+.cat-filter-btn {
+  padding: .25rem .65rem; border-radius: 20px; border: 1px solid var(--border);
+  background: var(--surface); font-size: .78rem; cursor: pointer; color: var(--text);
+  font-family: inherit; transition: background .15s, border-color .15s;
+}
+.cat-filter-btn:hover { background: var(--bg2); }
+.cat-filter-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+</style>
+<script>
+let _activeCat = 'all';
+
+function filterDocCat(cat) {
+  _activeCat = cat;
+  // Update button states
+  document.querySelectorAll('.cat-filter-btn[data-cat]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.cat === cat);
+  });
+  // Show/hide rows
+  document.querySelectorAll('#docCheckList .doc-check-row').forEach(row => {
+    row.style.display = (cat === 'all' || row.dataset.cat === cat) ? '' : 'none';
+  });
+}
+
+function checkFilteredAll(checked) {
+  document.querySelectorAll('#docCheckList .doc-check-row').forEach(row => {
+    if (row.style.display !== 'none') {
+      row.querySelector('input[type=checkbox]').checked = checked;
+    }
+  });
+}
+</script>
+{% endblock %}

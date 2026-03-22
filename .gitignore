@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Database (contains real data)
+*.db
+*.db-shm
+*.db-wal
+
+# Environment variables (contains API keys)
+.env
+
+# Uploaded files
+uploads/
+
+# OS
+.DS_Store

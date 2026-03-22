@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Investors{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Investor Sessions</h1>
+    <p class="page-sub">Manage investor-specific due diligence sessions and documents.</p>
+  </div>
+  <button class="btn-primary" onclick="document.getElementById('newInvestorModal').style.display='flex'">
+    + New Investor
+  </button>
+</div>
+
+{% if not investor_sessions %}
+<div class="empty-card">
+  <div class="empty-icon">◷</div>
+  <h3>No investor sessions yet</h3>
+  <p>Create an investor session to track their DDQ questions and upload their entity documents for cross-referencing.</p>
+  <button class="btn-primary" onclick="document.getElementById('newInvestorModal').style.display='flex'">
+    Create First Session
+  </button>
+</div>
+{% else %}
+<div class="investor-grid">
+  {% for s in investor_sessions %}
+  <a href="{{ url_for('investor_detail', session_id=s.id) }}" class="investor-card">
+    <div class="inv-card-header">
+      <div class="inv-avatar">{{ s.investor_name[0] }}</div>
+      <div>
+        <div class="inv-name">{{ s.investor_name }}</div>
+        {% if s.investor_entity %}
+        <div class="inv-entity">{{ s.investor_entity }}</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="inv-stats">
+      <div class="inv-stat">
+        <span class="inv-stat-val">{{ s.doc_count }}</span>
+        <span class="inv-stat-lbl">documents</span>
+      </div>
+      <div class="inv-stat">
+        <span class="inv-stat-val">{{ s.conversation_count }}</span>
+        <span class="inv-stat-lbl">sessions</span>
+      </div>
+    </div>
+    <div class="inv-date">Created {{ s.created_at[:10] }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- New Investor Modal -->
+<div id="newInvestorModal" class="modal-overlay" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>New Investor Session</h3>
+      <button class="modal-close" onclick="document.getElementById('newInvestorModal').style.display='none'">✕</button>
+    </div>
+    <form method="POST" action="{{ url_for('new_investor_session') }}">
+      <div class="field-group">
+        <label>Investor / Firm Name <span class="required">*</span></label>
+        <input type="text" name="investor_name" placeholder="e.g. Apex Capital Partners" required>
+      </div>
+      <div class="field-group">
+        <label>Legal Entity Name <span class="muted">(optional)</span></label>
+        <input type="text" name="investor_entity" placeholder="e.g. Apex Capital Partners LP">
+      </div>
+      <div class="field-group">
+        <label>Notes <span class="muted">(optional)</span></label>
+        <textarea name="notes" rows="2" placeholder="e.g. Pension fund, interested in co-investment rights…"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-outline" onclick="document.getElementById('newInvestorModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Create Session</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

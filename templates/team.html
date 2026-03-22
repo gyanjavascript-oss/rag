@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Team{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Team Members</h1>
+    <p class="page-sub">Manage who has access to the DDQ platform.</p>
+  </div>
+  <button class="btn-primary" onclick="document.getElementById('addUserModal').style.display='flex'">
+    + Add Member
+  </button>
+</div>
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th></tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td><strong>{{ u.name }}</strong></td>
+        <td>{{ u.email }}</td>
+        <td><span class="role-badge role-{{ u.role }}">{{ u.role }}</span></td>
+        <td>{{ u.created_at[:10] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Add User Modal -->
+<div id="addUserModal" class="modal-overlay" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Add Team Member</h3>
+      <button class="modal-close" onclick="document.getElementById('addUserModal').style.display='none'">✕</button>
+    </div>
+    <form method="POST" action="{{ url_for('add_team_member') }}">
+      <div class="field-group">
+        <label>Full Name <span class="required">*</span></label>
+        <input type="text" name="name" required>
+      </div>
+      <div class="field-group">
+        <label>Email <span class="required">*</span></label>
+        <input type="email" name="email" required>
+      </div>
+      <div class="field-group">
+        <label>Password <span class="required">*</span></label>
+        <input type="password" name="password" required>
+      </div>
+      <div class="field-group">
+        <label>Role</label>
+        <select name="role">
+          <option value="analyst">Analyst</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-outline" onclick="document.getElementById('addUserModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Add Member</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

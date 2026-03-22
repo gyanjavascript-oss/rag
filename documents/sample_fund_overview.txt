@@ -1,0 +1,106 @@
+SAMPLE FUND OVERVIEW
+====================
+
+Fund Name: Apex Growth Fund III
+Fund Type: Closed-End Private Equity Fund
+Fund Size: $500 million target, hard cap $600 million
+Vintage Year: 2024
+Strategy: Growth equity investments in technology and healthcare sectors
+Geographic Focus: North America and Western Europe
+Investment Stage: Series B through pre-IPO
+Typical Check Size: $25 million - $75 million
+
+FEES AND ECONOMICS
+==================
+
+Management Fee: 2.0% per annum on committed capital during the investment period,
+thereafter 1.5% on invested capital (net of realizations).
+
+Carried Interest: 20% carried interest with an 8% preferred return (hurdle rate).
+
+European Waterfall: The fund uses a European-style waterfall where LPs must receive
+return of all capital contributions plus the preferred return before the GP receives any carry.
+
+Management Fee Offset: 100% of transaction fees, monitoring fees, and director fees
+received by the GP or its affiliates will be applied to offset management fees.
+
+FUND TERMS
+==========
+
+Fund Life: 10 years from the final close, with two 1-year extensions at GP discretion
+(subject to LPAC approval for any further extensions).
+
+Investment Period: 5 years from the final close.
+
+GP Commitment: The GP will commit not less than 2% of total fund commitments.
+
+Clawback: Standard clawback provision requiring the GP to return excess carry
+distributions if aggregate distributions to LPs fall short of the preferred return
+on a whole-fund basis.
+
+KEY PERSON PROVISIONS
+=====================
+
+The fund designates [Partner A] and [Partner B] as Key Persons. A Key Person Event
+occurs if both Key Persons cease to devote substantially all of their professional
+time to the fund. Upon a Key Person Event, the investment period is automatically
+suspended until LPAC approves its reinstatement by majority vote.
+
+LP ADVISORY COMMITTEE (LPAC)
+=============================
+
+The LPAC consists of up to 7 LP representatives. LPAC approval is required for:
+- Related party transactions
+- Material conflicts of interest
+- Extension of the investment period or fund life beyond permitted extensions
+- Amendments to the LPA requiring greater than majority approval
+
+GOVERNANCE AND REPORTING
+========================
+
+Quarterly Reports: LPs receive quarterly financial statements within 60 days of
+quarter-end, including portfolio company updates, valuation summaries, and capital
+account statements.
+
+Annual Audited Financials: Audited annual financial statements prepared in accordance
+with GAAP are delivered within 120 days of fiscal year-end.
+
+Annual Meeting: The GP holds an annual meeting for LPs.
+
+INVESTMENT STRATEGY
+===================
+
+The fund targets companies with proven business models generating $10 million or more
+in annual revenue, with clear paths to profitability or already EBITDA-positive.
+
+The fund does not make venture-stage or seed investments. Target sectors include:
+enterprise software, health technology, digital infrastructure, and fintech.
+
+ESG POLICY
+==========
+
+The fund has a formal ESG policy. All investments undergo ESG due diligence as part
+of the standard investment process. The GP is a signatory to the UN Principles for
+Responsible Investment (UNPRI). An annual ESG report is provided to LPs.
+
+VALUATION POLICY
+================
+
+Portfolio company valuations are prepared quarterly in accordance with the IPEV
+Valuation Guidelines and ASC 820 (Fair Value Measurement). Valuations are reviewed
+by an independent third-party valuation firm annually and upon significant events.
+
+TRANSFERS AND SECONDARY SALES
+==============================
+
+LP interests may not be transferred without GP consent, which shall not be unreasonably
+withheld for transfers to affiliates. The GP maintains a right of first refusal on
+secondary sales to third parties.
+
+DISTRIBUTIONS
+=============
+
+Distributions are made at GP discretion, subject to maintaining adequate reserves.
+The fund targets distributing proceeds from realizations within 30 days of receipt.
+Tax distributions may be made to cover estimated tax obligations arising from
+fund income.
