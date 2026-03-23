@@ -849,11 +849,25 @@ def delete_kb_entry(entry_id: int):
     conn.close()
 
 
+def _fts_query_strict(query: str) -> str:
+    """Build an FTS5 AND query — all significant terms must be present."""
+    stop = {"the","a","an","is","are","was","were","be","been","being","have","has",
+            "had","do","does","did","will","would","could","should","may","might",
+            "of","in","on","at","to","for","with","by","from","about","and","or","not",
+            "what","how","when","where","who","which","why","can","your","our","my"}
+    words = [w.strip('.,?!;:"()') for w in query.lower().split()]
+    terms = [w for w in words if len(w) > 2 and w not in stop]
+    if not terms:
+        return f'"{query.replace(chr(34), "")}"'
+    return " AND ".join(terms)
+
+
 def search_kb(query: str, limit: int = 3) -> list[dict]:
-    """Search knowledge base. Returns best-matching entries with BM25 score."""
+    """Search knowledge base using strict AND query. Returns entries with BM25 score."""
     conn = get_db()
+    rows = []
     try:
-        fts_q = _fts_query(query)
+        fts_q = _fts_query_strict(query)
         rows = conn.execute("""
             SELECT kb.id, kb.question, kb.answer, kb.tags,
                    bm25(kb_fts) as score
