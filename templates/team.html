@@ -153,7 +153,9 @@
         </div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;">
-        <button class="btn-outline btn-sm" data-role="{{ role | tojson | e }}" onclick="openEditRoleModal(JSON.parse(this.dataset.role))">Edit</button>
+        {% if role.name != 'admin' %}
+        <button class="btn-outline btn-sm" onclick="openEditRoleModal({{ role.id }})">Edit</button>
+        {% endif %}
         {% if not role.is_system %}
         <form method="POST" action="{{ url_for('delete_role', role_id=role.id) }}"
           onsubmit="return confirm('Delete role {{ role.name }}?')">
@@ -322,6 +324,18 @@
 
 {% block scripts %}
 <script>
+// Embed roles data from server
+const ROLES_DATA = {};
+{% for role in roles %}
+ROLES_DATA[{{ role.id }}] = {
+  id: {{ role.id }},
+  name: {{ role.name | tojson }},
+  description: {{ (role.description or '') | tojson }},
+  permissions: {{ role.permissions | tojson }},
+  is_system: {{ 1 if role.is_system else 0 }}
+};
+{% endfor %}
+
 function openTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
@@ -336,15 +350,16 @@ function openRoleModal(userId, userName, currentRole) {
   document.getElementById('roleModal').style.display = 'flex';
 }
 
-function openEditRoleModal(role) {
+function openEditRoleModal(roleId) {
+  const role = ROLES_DATA[roleId];
+  if (!role) return;
   const isAdmin = role.name === 'admin';
   document.getElementById('editRoleForm').action = `/team/roles/${role.id}/edit`;
   document.getElementById('editRoleName').value = role.name;
   document.getElementById('editRoleDesc').value = role.description || '';
-  document.getElementById('editRoleName').disabled = role.is_system == 1;
+  document.getElementById('editRoleName').disabled = role.is_system === 1;
   document.getElementById('editRoleAdminNote').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('editRoleSystemNote').style.display = (!isAdmin && role.is_system) ? 'block' : 'none';
-  // Set checkboxes
   const perms = role.permissions || [];
   document.querySelectorAll('#editPermGrid input[type=checkbox]').forEach(cb => {
     cb.checked = isAdmin ? true : perms.includes(cb.dataset.key);
