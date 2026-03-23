@@ -61,14 +61,20 @@
     </div>
 
     <div class="sidebar-footer">
-      <div class="user-info">
-        <div class="user-avatar">{{ user.name[0] }}</div>
-        <div>
-          <div class="user-name">{{ user.name }}</div>
-          <div class="user-role">{{ user.role }}</div>
+      <a href="{{ url_for('profile') }}" style="text-decoration:none;">
+        <div class="user-info">
+          <div class="user-avatar">{{ user.name[0] }}</div>
+          <div>
+            <div class="user-name">{{ user.name }}</div>
+            <div class="user-role">{{ user.role }}</div>
+          </div>
         </div>
+      </a>
+      <div style="display:flex;gap:.75rem;align-items:center;">
+        <a href="{{ url_for('profile') }}" class="logout-btn">Profile</a>
+        <span style="color:rgba(255,255,255,.2);">·</span>
+        <a href="{{ url_for('logout') }}" class="logout-btn">Sign out</a>
       </div>
-      <a href="{{ url_for('logout') }}" class="logout-btn">Sign out</a>
     </div>
   </nav>
 

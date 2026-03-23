@@ -245,6 +245,37 @@ def create_user(email: str, name: str, password: str, role: str = "analyst") -> 
     return uid
 
 
+def get_user_by_id(user_id: int) -> dict:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_user_profile(user_id: int, name: str, email: str) -> bool:
+    conn = get_db()
+    try:
+        conn.execute("UPDATE users SET name=?, email=? WHERE id=?", (name, email, user_id))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def change_user_password(user_id: int, current_password: str, new_password: str) -> bool:
+    conn = get_db()
+    row = conn.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row or row["password_hash"] != _hash(current_password):
+        conn.close()
+        return False
+    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (_hash(new_password), user_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
 # ── Documents ─────────────────────────────────────────────────────────────────
 
 def list_fund_documents() -> list[dict]:

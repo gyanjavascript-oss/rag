@@ -108,6 +108,40 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/profile", methods=["GET", "POST"])
+@login_required
+def profile():
+    user = db.get_user_by_id(session["user_id"])
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "update_profile":
+            name = request.form.get("name", "").strip()
+            email = request.form.get("email", "").strip()
+            if not name or not email:
+                flash("Name and email are required.", "error")
+            elif db.update_user_profile(session["user_id"], name, email):
+                session["user_name"] = name
+                flash("Profile updated.", "success")
+            else:
+                flash("Email already in use.", "error")
+        elif action == "change_password":
+            current = request.form.get("current_password", "")
+            new = request.form.get("new_password", "")
+            confirm = request.form.get("confirm_password", "")
+            if not current or not new or not confirm:
+                flash("All password fields are required.", "error")
+            elif new != confirm:
+                flash("New passwords do not match.", "error")
+            elif len(new) < 6:
+                flash("Password must be at least 6 characters.", "error")
+            elif db.change_user_password(session["user_id"], current, new):
+                flash("Password changed successfully.", "success")
+            else:
+                flash("Current password is incorrect.", "error")
+        return redirect(url_for("profile"))
+    return render_template("profile.html", user=user)
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @app.route("/dashboard")

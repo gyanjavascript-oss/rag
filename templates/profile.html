@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}My Profile{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">My Profile</div>
+    <div class="page-sub">Manage your account details and password</div>
+  </div>
+</div>
+
+<div style="max-width:560px; display:flex; flex-direction:column; gap:1.5rem;">
+
+  <!-- Profile Info -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Account Details</div>
+    </div>
+    <div style="padding:1.5rem;">
+      <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem;">
+        <div class="user-avatar" style="width:56px;height:56px;font-size:1.4rem;flex-shrink:0;">{{ user.name[0].upper() }}</div>
+        <div>
+          <div style="font-weight:700;font-size:1.05rem;">{{ user.name }}</div>
+          <div class="role-badge role-{{ user.role }}" style="margin-top:.3rem;">{{ user.role }}</div>
+        </div>
+      </div>
+      <form method="POST">
+        <input type="hidden" name="action" value="update_profile">
+        <div class="field-group">
+          <label>Full Name <span class="required">*</span></label>
+          <input type="text" name="name" value="{{ user.name }}" required>
+        </div>
+        <div class="field-group">
+          <label>Email Address <span class="required">*</span></label>
+          <input type="email" name="email" value="{{ user.email }}" required>
+        </div>
+        <div class="field-group">
+          <label>Role</label>
+          <input type="text" value="{{ user.role | capitalize }}" disabled style="background:var(--bg2);color:var(--muted);">
+          <div class="field-hint">Role can only be changed by an admin.</div>
+        </div>
+        <div class="field-group">
+          <label>Member Since</label>
+          <input type="text" value="{{ user.created_at[:10] }}" disabled style="background:var(--bg2);color:var(--muted);">
+        </div>
+        <button type="submit" class="btn-primary">Save Changes</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Change Password -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Change Password</div>
+    </div>
+    <div style="padding:1.5rem;">
+      <form method="POST">
+        <input type="hidden" name="action" value="change_password">
+        <div class="field-group">
+          <label>Current Password <span class="required">*</span></label>
+          <input type="password" name="current_password" required autocomplete="current-password">
+        </div>
+        <div class="field-group">
+          <label>New Password <span class="required">*</span></label>
+          <input type="password" name="new_password" required autocomplete="new-password" minlength="6">
+          <div class="field-hint">Minimum 6 characters.</div>
+        </div>
+        <div class="field-group">
+          <label>Confirm New Password <span class="required">*</span></label>
+          <input type="password" name="confirm_password" required autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn-primary">Update Password</button>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
