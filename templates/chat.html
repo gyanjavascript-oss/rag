@@ -90,7 +90,11 @@
               <div class="sources-title">Sources</div>
               {% for src in msg.sources %}
               <div class="source-item">
+                {% if src.doc_id %}
+                <a class="source-doc" href="{{ url_for('view_document', doc_id=src.doc_id) }}" target="_blank">{{ src.doc_name }}</a>
+                {% else %}
                 <span class="source-doc">{{ src.doc_name }}</span>
+                {% endif %}
                 {% if src.section %}<span class="source-section">{{ src.section }}</span>{% endif %}
                 {% if src.excerpt %}<div class="source-excerpt">{{ src.excerpt[:180] }}…</div>{% endif %}
               </div>
@@ -311,7 +315,9 @@ form.addEventListener('submit', async (e) => {
             <div class="sources-title">Sources</div>
             ${result.sources.map(s => `
               <div class="source-item">
-                <span class="source-doc">${escapeHtml(s.doc_name)}</span>
+                ${s.doc_id
+                  ? `<a class="source-doc" href="/documents/${s.doc_id}/view" target="_blank">${escapeHtml(s.doc_name)}</a>`
+                  : `<span class="source-doc">${escapeHtml(s.doc_name)}</span>`}
                 ${s.section ? `<span class="source-section">${escapeHtml(s.section)}</span>` : ''}
                 ${s.excerpt ? `<div class="source-excerpt">${escapeHtml(s.excerpt.slice(0,180))}…</div>` : ''}
               </div>`).join('')}

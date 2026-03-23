@@ -382,7 +382,10 @@ function renderSources(sources) {
   }
   sourcesEl.innerHTML = sources.map(s => `
     <div class="source-card">
-      <div class="source-doc">◫ ${escHtml(s.doc_name||'')}</div>
+      <div class="source-doc">◫ ${s.doc_id
+        ? `<a href="/investor/documents/${s.doc_id}/view" target="_blank" style="color:#0f1f3d;text-decoration:underline;text-underline-offset:2px;">${escHtml(s.doc_name||'')}</a>`
+        : escHtml(s.doc_name||'')}
+      </div>
       ${s.section ? `<div class="source-section">${escHtml(s.section)}</div>` : ""}
       ${s.excerpt ? `<div class="source-excerpt">"${escHtml(s.excerpt.substring(0,220))}${s.excerpt.length>220?"…":""}"</div>` : ""}
     </div>

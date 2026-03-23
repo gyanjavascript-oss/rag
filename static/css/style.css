@@ -386,6 +386,8 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
 .sources-title { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin-bottom: .5rem; }
 .source-item { margin-bottom: .5rem; }
 .source-doc     { font-size: .8rem; font-weight: 600; color: var(--navy); }
+a.source-doc    { text-decoration: underline; text-underline-offset: 2px; }
+a.source-doc:hover { color: var(--accent); }
 .source-section { font-size: .75rem; color: var(--muted); margin-left: .5rem; }
 .source-excerpt { font-size: .78rem; color: var(--muted); margin-top: .2rem; font-style: italic; }
 

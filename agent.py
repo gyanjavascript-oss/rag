@@ -36,7 +36,7 @@ RESPONSE FORMAT — you MUST return ONLY valid JSON, no other text:
 {{
   "answer": "Detailed factual answer with inline citations [Doc Name, Section]",
   "sources": [
-    {{"doc_name": "exact document name", "section": "section or page reference", "excerpt": "short verbatim quote from the document"}}
+    {{"doc_name": "exact document name", "doc_id": 123, "section": "section or page reference", "excerpt": "short verbatim quote from the document"}}
   ],
   "draft_response": "Professional email-ready response the team can copy and send. Start with 'Thank you for your question...'",
   "themes": ["theme1", "theme2"],
@@ -147,6 +147,7 @@ def _execute_tool(tool_name: str, tool_input: dict, investor_session_id: int = N
         return json.dumps({
             "results": [
                 {
+                    "doc_id": r["document_id"],
                     "doc_name": r["doc_name"],
                     "doc_type": r["doc_type"],
                     "section": r.get("section_ref") or r.get("page_ref") or "N/A",
