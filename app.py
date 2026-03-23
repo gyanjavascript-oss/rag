@@ -870,5 +870,67 @@ def api_pending_count():
     return jsonify({"count": db.get_pending_handover_count()})
 
 
+# ── Knowledge Base ─────────────────────────────────────────────────────────────
+
+@app.route("/knowledge-base")
+@login_required
+def knowledge_base():
+    entries = db.list_kb_entries()
+    return render_template(
+        "knowledge_base.html",
+        user=_current_user(),
+        entries=entries,
+        fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
+    )
+
+
+@app.route("/knowledge-base/add", methods=["POST"])
+@login_required
+def kb_add():
+    question = request.form.get("question", "").strip()
+    answer = request.form.get("answer", "").strip()
+    tags = request.form.get("tags", "").strip()
+    if not question or not answer:
+        flash("Question and answer are required.", "error")
+        return redirect(url_for("knowledge_base"))
+    db.add_kb_entry(question, answer, tags, _current_user()["id"])
+    flash("Knowledge base entry added.", "success")
+    return redirect(url_for("knowledge_base"))
+
+
+@app.route("/knowledge-base/<int:entry_id>/edit", methods=["GET", "POST"])
+@login_required
+def kb_edit(entry_id):
+    entry = db.get_kb_entry(entry_id)
+    if not entry:
+        flash("Entry not found.", "error")
+        return redirect(url_for("knowledge_base"))
+    if request.method == "POST":
+        question = request.form.get("question", "").strip()
+        answer = request.form.get("answer", "").strip()
+        tags = request.form.get("tags", "").strip()
+        if not question or not answer:
+            flash("Question and answer are required.", "error")
+        else:
+            db.update_kb_entry(entry_id, question, answer, tags)
+            flash("Entry updated.", "success")
+            return redirect(url_for("knowledge_base"))
+    return render_template(
+        "knowledge_base.html",
+        user=_current_user(),
+        entries=db.list_kb_entries(),
+        edit_entry=entry,
+        fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
+    )
+
+
+@app.route("/knowledge-base/<int:entry_id>/delete", methods=["POST"])
+@login_required
+def kb_delete(entry_id):
+    db.delete_kb_entry(entry_id)
+    flash("Entry deleted.", "success")
+    return redirect(url_for("knowledge_base"))
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

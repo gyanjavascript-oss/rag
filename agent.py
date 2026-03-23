@@ -16,6 +16,7 @@ from database import (
     search_assigned_fund_documents,
     search_investor_documents,
     find_similar_questions,
+    search_kb,
 )
 
 FUND_NAME = os.getenv("FUND_NAME", "the Fund")
@@ -204,6 +205,26 @@ def _build_messages(question: str, conversation_history: list) -> list:
     return messages
 
 
+def _check_knowledge_base(question: str) -> dict | None:
+    """Check admin knowledge base for a trained answer. Returns result dict or None."""
+    kb_hits = search_kb(question, limit=1)
+    if not kb_hits:
+        return None
+    best = kb_hits[0]
+    # BM25 scores are negative; closer to 0 = better match. Use -2.0 as threshold.
+    if best["score"] > -2.0:
+        return None
+    return {
+        "answer": best["answer"],
+        "sources": [{"doc_name": "Knowledge Base", "section": "Admin-trained answer", "excerpt": best["question"]}],
+        "draft_response": f"Thank you for your question.\n\n{best['answer']}\n\nPlease let us know if you need any further clarification.",
+        "themes": ["other"],
+        "confidence": "high",
+        "gaps": None,
+        "_kb_match": True,
+    }
+
+
 def answer_question(
     question: str,
     conversation_history: list,
@@ -212,6 +233,11 @@ def answer_question(
     is_investor: bool = False,
 ) -> dict:
     """Run the DDQ agent. Returns parsed dict with answer, sources, draft_response, themes."""
+    # Check admin knowledge base first
+    kb_result = _check_knowledge_base(question)
+    if kb_result:
+        return kb_result
+
     client = OpenAI()
     messages = _build_messages(question, conversation_history)
 
@@ -261,6 +287,12 @@ def stream_answer(
     Generator yielding SSE-formatted strings.
     Runs tool-use loop first (non-streaming), then yields the final result.
     """
+    # Check admin knowledge base first
+    kb_result = _check_knowledge_base(question)
+    if kb_result:
+        yield f"data: {json.dumps({'type': 'result', 'data': kb_result})}\n\n"
+        return
+
     client = OpenAI()
     messages = _build_messages(question, conversation_history)
 

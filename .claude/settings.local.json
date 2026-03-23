@@ -22,7 +22,21 @@
       "Bash(python -m py_compile app.py)",
       "Bash(git init:*)",
       "Bash(git remote:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit -m \"Initial commit: vcurd DDQ Platform:*)",
+      "Bash(git push:*)",
+      "Bash(aws --version)",
+      "Bash(aws sts:*)",
+      "Bash(ssh -i /Users/gyan/Documents/RAgdata/ninja.pem -o StrictHostKeyChecking=no ubuntu@ec2-3-7-31-253.ap-south-1.compute.amazonaws.com \"echo ''Connected OK'' && lsb_release -a 2>/dev/null\")",
+      "Bash(ssh:*)",
+      "Bash(brew install:*)",
+      "Bash(sshpass:*)",
+      "Bash(git commit -m \"Fix SQLite database locked error - add timeout and busy_timeout:*)",
+      "Bash(curl:*)",
+      "Bash(git commit -m \"Fix live chat: investor stays active during handover, both parties can message, AI resumes after resolve:*)",
+      "Bash(git commit -m \"Analytics: show citation % bars; Documents: in-browser view for admin and investor:*)",
+      "Bash(git commit -m \"Add admin knowledge base for training agent Q&A:*)"
     ]
   }
 }

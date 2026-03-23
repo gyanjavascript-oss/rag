@@ -168,6 +168,27 @@ def init_db():
             FOREIGN KEY (document_id) REFERENCES fund_documents(id) ON DELETE CASCADE,
             FOREIGN KEY (assigned_by) REFERENCES users(id)
         );
+
+        -- Admin knowledge base: trained Q&A pairs
+        CREATE TABLE IF NOT EXISTS knowledge_base (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            question    TEXT NOT NULL,
+            answer      TEXT NOT NULL,
+            tags        TEXT,
+            created_by  INTEGER,
+            created_at  TEXT DEFAULT (datetime('now')),
+            updated_at  TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        -- FTS5 index for knowledge base search
+        CREATE VIRTUAL TABLE IF NOT EXISTS kb_fts USING fts5(
+            question,
+            answer,
+            content='knowledge_base',
+            content_rowid='id',
+            tokenize='porter ascii'
+        );
     """)
 
     # Migrations for columns added after initial release
@@ -767,6 +788,85 @@ def update_conversation_status(conversation_id: int, status: str):
     conn.execute("UPDATE conversations SET status=? WHERE id=?", (status, conversation_id))
     conn.commit()
     conn.close()
+
+
+# ── Knowledge Base ────────────────────────────────────────────────────────────
+
+def list_kb_entries() -> list[dict]:
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT kb.*, u.name as created_by_name
+        FROM knowledge_base kb
+        LEFT JOIN users u ON kb.created_by = u.id
+        ORDER BY kb.updated_at DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_kb_entry(entry_id: int) -> dict:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM knowledge_base WHERE id=?", (entry_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_kb_entry(question: str, answer: str, tags: str, created_by: int) -> int:
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO knowledge_base (question, answer, tags, created_by)
+        VALUES (?, ?, ?, ?)
+    """, (question.strip(), answer.strip(), tags.strip() if tags else "", created_by))
+    entry_id = c.lastrowid
+    # Sync FTS index
+    conn.execute("INSERT INTO kb_fts(rowid, question, answer) VALUES (?, ?, ?)",
+                 (entry_id, question.strip(), answer.strip()))
+    conn.commit()
+    conn.close()
+    return entry_id
+
+
+def update_kb_entry(entry_id: int, question: str, answer: str, tags: str):
+    conn = get_db()
+    conn.execute("""
+        UPDATE knowledge_base SET question=?, answer=?, tags=?, updated_at=datetime('now')
+        WHERE id=?
+    """, (question.strip(), answer.strip(), tags.strip() if tags else "", entry_id))
+    # Rebuild FTS row
+    conn.execute("DELETE FROM kb_fts WHERE rowid=?", (entry_id,))
+    conn.execute("INSERT INTO kb_fts(rowid, question, answer) VALUES (?, ?, ?)",
+                 (entry_id, question.strip(), answer.strip()))
+    conn.commit()
+    conn.close()
+
+
+def delete_kb_entry(entry_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM kb_fts WHERE rowid=?", (entry_id,))
+    conn.execute("DELETE FROM knowledge_base WHERE id=?", (entry_id,))
+    conn.commit()
+    conn.close()
+
+
+def search_kb(query: str, limit: int = 3) -> list[dict]:
+    """Search knowledge base. Returns best-matching entries with BM25 score."""
+    conn = get_db()
+    try:
+        fts_q = _fts_query(query)
+        rows = conn.execute("""
+            SELECT kb.id, kb.question, kb.answer, kb.tags,
+                   bm25(kb_fts) as score
+            FROM kb_fts
+            JOIN knowledge_base kb ON kb_fts.rowid = kb.id
+            WHERE kb_fts MATCH ?
+            ORDER BY bm25(kb_fts)
+            LIMIT ?
+        """, (fts_q, limit)).fetchall()
+    except Exception:
+        rows = []
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_recent_questions(limit: int = 20) -> list[dict]:

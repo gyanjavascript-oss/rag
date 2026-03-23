@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Base{% endblock %}
+
+{% block head %}
+<style>
+.kb-grid { display: grid; grid-template-columns: 1fr 420px; gap: 1.5rem; align-items: start; }
+.kb-entry { padding: 1.1rem 1.4rem; border-bottom: 1px solid var(--border); }
+.kb-entry:last-child { border-bottom: none; }
+.kb-question { font-weight: 600; font-size: .9rem; color: var(--navy); margin-bottom: .4rem; }
+.kb-answer { font-size: .875rem; color: var(--text); white-space: pre-wrap; line-height: 1.6; }
+.kb-meta { font-size: .75rem; color: var(--muted); margin-top: .5rem; display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+.kb-tag { background: #eef0ff; color: #3a3dcc; border-radius: 4px; padding: 1px 7px; font-size: .72rem; font-weight: 600; }
+.kb-actions { display: flex; gap: .4rem; margin-left: auto; }
+.field-group { margin-bottom: 1rem; }
+.field-group label { display: block; font-size: .82rem; font-weight: 600; margin-bottom: .3rem; color: var(--text); }
+.field-group input, .field-group textarea, .field-group select {
+  width: 100%; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: 6px;
+  font-size: .875rem; font-family: inherit; background: var(--surface); color: var(--text);
+  box-sizing: border-box;
+}
+.field-group textarea { resize: vertical; min-height: 90px; }
+.field-group input:focus, .field-group textarea:focus { outline: none; border-color: var(--navy); }
+.field-hint { font-size: .75rem; color: var(--muted); margin-top: .25rem; }
+.empty-state { padding: 3rem; text-align: center; color: var(--muted); }
+.edit-highlight { background: #fffbea; border: 1px solid #f0c040; border-radius: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Knowledge Base</h1>
+    <p class="page-sub">Train the agent with custom Q&amp;A pairs. Matching investor questions will use these answers.</p>
+  </div>
+</div>
+
+<div class="kb-grid">
+
+  <!-- Entries list -->
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Trained Answers <span style="color:var(--muted);font-weight:400;font-size:.85rem;">({{ entries|length }})</span></h2>
+    </div>
+
+    {% if entries %}
+      {% for e in entries %}
+      <div class="kb-entry {% if edit_entry and edit_entry.id == e.id %}edit-highlight{% endif %}">
+        <div class="kb-question">Q: {{ e.question }}</div>
+        <div class="kb-answer">{{ e.answer }}</div>
+        <div class="kb-meta">
+          {% if e.tags %}
+            {% for tag in e.tags.split(',') %}
+              {% set t = tag.strip() %}
+              {% if t %}<span class="kb-tag">{{ t }}</span>{% endif %}
+            {% endfor %}
+          {% endif %}
+          <span>{{ e.created_by_name or '—' }}</span>
+          <span>{{ e.updated_at[:10] }}</span>
+          <div class="kb-actions">
+            <a href="{{ url_for('kb_edit', entry_id=e.id) }}" class="btn-outline btn-sm">Edit</a>
+            <form method="POST" action="{{ url_for('kb_delete', entry_id=e.id) }}"
+                  onsubmit="return confirm('Delete this entry?')" style="display:inline;">
+              <button class="btn-danger-sm">Delete</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state">
+        <div style="font-size:2rem;margin-bottom:.5rem;">🧠</div>
+        <p>No entries yet. Add your first trained answer on the right.</p>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Add / Edit form -->
+  <div>
+    <div class="card {% if edit_entry %}edit-highlight{% endif %}">
+      <div class="card-header">
+        <h2 class="card-title">{% if edit_entry %}Edit Entry{% else %}Add New Entry{% endif %}</h2>
+        {% if edit_entry %}
+        <a href="{{ url_for('knowledge_base') }}" class="btn-outline btn-sm">Cancel</a>
+        {% endif %}
+      </div>
+      <form method="POST"
+            action="{% if edit_entry %}{{ url_for('kb_edit', entry_id=edit_entry.id) }}{% else %}{{ url_for('kb_add') }}{% endif %}"
+            style="padding: 1.25rem;">
+
+        <div class="field-group">
+          <label>Investor Question</label>
+          <textarea name="question" placeholder="e.g. What is the management fee?" required>{% if edit_entry %}{{ edit_entry.question }}{% endif %}</textarea>
+          <div class="field-hint">Write it as an investor would ask. The agent matches by meaning, not exact words.</div>
+        </div>
+
+        <div class="field-group">
+          <label>Trained Answer</label>
+          <textarea name="answer" rows="6" placeholder="Enter the authoritative answer…" required>{% if edit_entry %}{{ edit_entry.answer }}{% endif %}</textarea>
+          <div class="field-hint">This answer will be returned verbatim when a matching question is detected.</div>
+        </div>
+
+        <div class="field-group">
+          <label>Tags <span style="color:var(--muted);font-weight:400;">(optional)</span></label>
+          <input type="text" name="tags" placeholder="e.g. fees, management fee, fund terms"
+                 value="{% if edit_entry %}{{ edit_entry.tags }}{% endif %}">
+          <div class="field-hint">Comma-separated tags for your reference.</div>
+        </div>
+
+        <button type="submit" class="btn-primary" style="width:100%;">
+          {% if edit_entry %}Save Changes{% else %}Add to Knowledge Base{% endif %}
+        </button>
+      </form>
+    </div>
+
+    <div class="card" style="margin-top:1rem;background:#f0f8ff;border-color:#bee3f8;">
+      <div style="padding:1rem 1.25rem;">
+        <h4 style="margin:0 0 .5rem;font-size:.85rem;color:var(--navy);">How it works</h4>
+        <ul style="font-size:.82rem;color:var(--text);padding-left:1.1rem;line-height:1.9;margin:0;">
+          <li>When an investor asks a question, the agent checks this knowledge base first.</li>
+          <li>If a trained answer matches, it's returned immediately — no document search needed.</li>
+          <li>Matching is semantic (keyword-based), so variations of the same question will match.</li>
+          <li>Add answers for your most frequently asked or sensitive questions.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
