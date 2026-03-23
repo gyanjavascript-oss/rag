@@ -328,6 +328,14 @@ def stream_answer(
                 })
         else:
             parsed = _parse_response(msg.content or "")
+            answer = parsed.get("answer", "")
+            # Stream answer word-by-word for typing effect
+            if answer:
+                words = answer.split(" ")
+                for i, word in enumerate(words):
+                    token = word + (" " if i < len(words) - 1 else "")
+                    yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+            # Send full result (sources, themes, meta) after tokens
             yield f"data: {json.dumps({'type': 'result', 'data': parsed})}\n\n"
             return
 

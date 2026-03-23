@@ -99,6 +99,10 @@
     .conf-medium { background: #fff3cd; color: #856404; }
     .conf-low { background: #f8d7da; color: #721c24; }
 
+    /* Typing cursor */
+    .typing-cursor { display: inline-block; width: 2px; height: 1em; background: #0f1f3d; margin-left: 1px; vertical-align: text-bottom; animation: cursorBlink .7s steps(1) infinite; }
+    @keyframes cursorBlink { 0%,100%{opacity:1} 50%{opacity:0} }
+
     /* Input */
     .portal-input-area { padding: .875rem 1.5rem 1rem; border-top: 1px solid #dde1ed; background: #fff; }
     .portal-input-row { display: flex; gap: .65rem; align-items: flex-end; }
@@ -512,19 +516,67 @@ function sendQuestion() {
   addUserBubble(q);
   addStatusBubble("Searching fund documents…");
 
+  let streamBubble = null;   // the growing assistant bubble
+  let streamText = "";       // accumulated text so far
+  let cursor = null;         // blinking cursor element
+
+  function getOrCreateStreamBubble() {
+    if (streamBubble) return streamBubble;
+    removeStatus();
+    streamBubble = document.createElement("div");
+    streamBubble.className = "msg-bubble assistant";
+    const content = document.createElement("div");
+    content.className = "msg-content";
+    cursor = document.createElement("span");
+    cursor.className = "typing-cursor";
+    content.appendChild(cursor);
+    const meta = document.createElement("div");
+    meta.className = "msg-meta";
+    meta.textContent = "AI Assistant";
+    streamBubble.appendChild(content);
+    streamBubble.appendChild(meta);
+    messagesEl.appendChild(streamBubble);
+    return streamBubble;
+  }
+
   const es = new EventSource(STREAM_URL + "?q=" + encodeURIComponent(q));
   es.onmessage = evt => {
     try {
       const data = JSON.parse(evt.data);
       if (data.type === "tool_call") {
         addStatusBubble("Searching documents…");
+      } else if (data.type === "token") {
+        // Progressive word-by-word rendering
+        const bubble = getOrCreateStreamBubble();
+        streamText += data.text;
+        const content = bubble.querySelector(".msg-content");
+        // Insert text node before cursor
+        content.insertBefore(document.createTextNode(data.text), cursor);
+        scrollBottom();
       } else if (data.type === "result") {
-        addAssistantBubble(data.data);
         es.close();
         sendBtn.disabled = false;
-        lastMessageId = lastMessageId + 2; // user + assistant
+        lastMessageId = lastMessageId + 2;
+        const d = data.data;
+        if (streamBubble) {
+          // Finalise: remove cursor, update meta with confidence + sources
+          if (cursor) cursor.remove();
+          const conf = d.confidence || "medium";
+          const srcCount = (d.sources || []).length;
+          streamBubble.querySelector(".msg-meta").innerHTML =
+            `AI Assistant${srcCount ? ` · ${srcCount} source${srcCount !== 1 ? "s" : ""}` : ""} · <span class="conf-badge conf-${conf}">${conf}</span>`;
+          renderSources(d.sources || []);
+          if (!d._kb_match && conf === "low" && srcCount === 0) {
+            setTimeout(showHandoverBanner, 600);
+          }
+        } else {
+          // KB answer or instant result (no tokens emitted)
+          addAssistantBubble(d);
+        }
+        streamBubble = null; streamText = ""; cursor = null;
       } else if (data.type === "error") {
         removeStatus();
+        if (cursor) cursor.remove();
         addSystemBubble("An error occurred. Please try again.");
         es.close();
         sendBtn.disabled = false;
@@ -532,7 +584,12 @@ function sendQuestion() {
       }
     } catch(e) {}
   };
-  es.onerror = () => { removeStatus(); sendBtn.disabled = false; es.close(); };
+  es.onerror = () => {
+    removeStatus();
+    if (cursor) cursor.remove();
+    sendBtn.disabled = false;
+    es.close();
+  };
 }
 
 // Polling for human agent messages
