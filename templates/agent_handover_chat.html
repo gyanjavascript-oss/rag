@@ -63,7 +63,7 @@
 
     <div class="chat-messages" id="chatMessages">
       {% for m in messages %}
-      <div class="agent-msg-bubble {{ m.role }}">
+      <div class="agent-msg-bubble {{ m.role }}" data-id="{{ m.id }}">
         <div class="agent-msg-content">{{ m.content }}</div>
         <div class="agent-msg-meta">
           {% if m.role == 'user' %}Investor
@@ -113,8 +113,14 @@
 <script>
 const HANDOVER_ID = {{ handover.id }};
 const REPLY_URL = "{{ url_for('agent_handover_reply', handover_id=handover.id) }}";
+const AGENT_POLL_URL = "{{ url_for('agent_handover_poll', handover_id=handover.id) }}";
 const messagesEl = document.getElementById("chatMessages");
 const msgEl = document.getElementById("agentMessage");
+let agentLastMsgId = 0;
+document.querySelectorAll(".agent-msg-bubble[data-id]").forEach(el => {
+  const id = parseInt(el.dataset.id || 0);
+  if (id > agentLastMsgId) agentLastMsgId = id;
+});
 
 // Auto-resize textarea
 msgEl.addEventListener("input", () => {
@@ -153,10 +159,35 @@ function sendReply() {
         div.className = "agent-msg-bubble human_agent";
         div.innerHTML = `<div class="agent-msg-content">${escHtml(msg)}</div><div class="agent-msg-meta">You (Human Agent) · ${time}</div>`;
         messagesEl.appendChild(div);
+        if (data.msg_id) agentLastMsgId = Math.max(agentLastMsgId, data.msg_id);
         scrollBottom();
       }
     })
     .finally(() => { btn.disabled = false; });
 }
+
+// Poll for new investor messages every 3s
+function pollInvestorMessages() {
+  fetch(AGENT_POLL_URL + "?last_id=" + agentLastMsgId)
+    .then(r => r.json())
+    .then(data => {
+      if (!data.messages) return;
+      data.messages.forEach(m => {
+        if (m.id <= agentLastMsgId) return;
+        agentLastMsgId = m.id;
+        if (m.role === "user") {
+          const now = m.created_at ? m.created_at.substring(11,16) : "";
+          const div = document.createElement("div");
+          div.className = "agent-msg-bubble user";
+          div.dataset.id = m.id;
+          div.innerHTML = `<div class="agent-msg-content">${escHtml(m.content)}</div><div class="agent-msg-meta">Investor · ${escHtml(now)}</div>`;
+          messagesEl.appendChild(div);
+          scrollBottom();
+        }
+      });
+    })
+    .catch(() => {});
+}
+setInterval(pollInvestorMessages, 3000);
 </script>
 {% endblock %}

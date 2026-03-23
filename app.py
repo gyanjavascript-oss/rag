@@ -694,6 +694,21 @@ def investor_request_handover(conv_id):
     return jsonify({"status": "ok"})
 
 
+@app.route("/investor/chat/<int:conv_id>/send", methods=["POST"])
+@investor_login_required
+def investor_chat_send(conv_id):
+    """Investor sends a message to the human agent during an active handover."""
+    inv = _current_investor()
+    conv = db.get_conversation(conv_id)
+    if not conv or conv.get("investor_session_id") != inv["session_id"]:
+        return jsonify({"error": "not found"}), 404
+    message = (request.json or {}).get("message", "").strip()
+    if not message:
+        return jsonify({"error": "empty"}), 400
+    msg_id = db.add_message(conv_id, "user", message)
+    return jsonify({"status": "ok", "msg_id": msg_id})
+
+
 @app.route("/investor/chat/<int:conv_id>/poll")
 @investor_login_required
 def investor_chat_poll(conv_id):
@@ -782,6 +797,20 @@ def agent_handover_reply(handover_id):
         return jsonify({"error": "not found"}), 404
     msg_id = db.add_message(row[0], "human_agent", message)
     return jsonify({"status": "ok", "msg_id": msg_id, "agent_name": user["name"]})
+
+
+@app.route("/agent/handovers/<int:handover_id>/poll")
+@login_required
+def agent_handover_poll(handover_id):
+    """Agent polls for new investor messages during live chat."""
+    conn = db.get_db()
+    row = conn.execute("SELECT conversation_id FROM handover_requests WHERE id=?", (handover_id,)).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    last_id = int(request.args.get("last_id", 0))
+    new_msgs = db.get_messages_since(row[0], last_id)
+    return jsonify({"messages": new_msgs})
 
 
 @app.route("/agent/handovers/<int:handover_id>/resolve", methods=["POST"])

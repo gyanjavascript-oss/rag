@@ -264,6 +264,7 @@ const CONV_ID = {{ active_conv.id }};
 const STREAM_URL = "{{ url_for('investor_chat_stream', conv_id=active_conv.id) }}";
 const HANDOVER_URL = "{{ url_for('investor_request_handover', conv_id=active_conv.id) }}";
 const POLL_URL = "{{ url_for('investor_chat_poll', conv_id=active_conv.id) }}";
+const SEND_URL = "{{ url_for('investor_chat_send', conv_id=active_conv.id) }}";
 
 const messagesEl = document.getElementById("portalMessages");
 const sourcesEl = document.getElementById("portalSources");
@@ -286,7 +287,10 @@ questionEl.addEventListener("input", () => {
   questionEl.style.height = Math.min(questionEl.scrollHeight, 130) + "px";
 });
 questionEl.addEventListener("keydown", e => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    if (convStatus === "human_active") sendToAgent(); else sendQuestion();
+  }
 });
 
 function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
@@ -299,10 +303,13 @@ scrollBottom();
   try { renderSources(JSON.parse(bubbles[bubbles.length - 1].dataset.sources || "[]")); } catch(e) {}
 })();
 
-// Disable input if already in handover
-if (convStatus === "pending_handover" || convStatus === "human_active") {
+// Set correct state on load
+if (convStatus === "pending_handover") {
   lockInput();
-  showWaitingBanner(convStatus === "human_active" ? "A fund team member has joined the conversation." : null);
+  showWaitingBanner();
+  startPolling();
+} else if (convStatus === "human_active") {
+  switchToAgentMode();
   startPolling();
 }
 
@@ -347,13 +354,26 @@ function removeWaitingBanner() {
 function lockInput() {
   sendBtn.disabled = true;
   questionEl.disabled = true;
-  questionEl.placeholder = "Chat handed over to human agent…";
+  questionEl.placeholder = "Waiting for a fund team member to join…";
 }
 
 function unlockInput() {
   sendBtn.disabled = false;
   questionEl.disabled = false;
   questionEl.placeholder = "Ask a question about the fund…";
+  sendBtn.textContent = "Send";
+  sendBtn.onclick = sendQuestion;
+}
+
+function switchToAgentMode() {
+  // Input stays enabled — investor can reply to human agent
+  sendBtn.disabled = false;
+  questionEl.disabled = false;
+  questionEl.placeholder = "Reply to fund team member…";
+  sendBtn.textContent = "Reply";
+  sendBtn.onclick = sendToAgent;
+  removeWaitingBanner();
+  removeHandoverBanner();
 }
 
 function showHandoverBanner() {
@@ -381,6 +401,26 @@ function showWaitingBanner(msg) {
   div.innerHTML = `<span class="waiting-dot"></span>${escHtml(msg || "Waiting for a fund team member to join… You'll be notified here.")}`;
   messagesEl.appendChild(div);
   scrollBottom();
+}
+
+function sendToAgent() {
+  const q = questionEl.value.trim();
+  if (!q || sendBtn.disabled) return;
+  sendBtn.disabled = true;
+  questionEl.value = "";
+  questionEl.style.height = "auto";
+  addUserBubble(q);
+  fetch(SEND_URL, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({message: q})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.msg_id) lastMessageId = Math.max(lastMessageId, data.msg_id);
+    sendBtn.disabled = false;
+  })
+  .catch(() => { sendBtn.disabled = false; });
 }
 
 function requestHandover(btn) {
@@ -521,12 +561,14 @@ function pollMessages() {
       if (newStatus === "human_active" && convStatus !== "human_active") {
         convStatus = "human_active";
         removeWaitingBanner();
-        addSystemBubble("A fund team member has joined the conversation.");
+        addSystemBubble("A fund team member has joined. You can now chat directly.");
+        switchToAgentMode();
       } else if (newStatus === "active" && (convStatus === "pending_handover" || convStatus === "human_active")) {
         convStatus = "active";
         stopPolling();
         unlockInput();
         removeWaitingBanner();
+        addSystemBubble("The fund team member has left. You can continue asking AI questions.");
       }
     })
     .catch(() => {});
