@@ -689,6 +689,16 @@ def create_investor_user(email: str, name: str, password: str, investor_session_
     return uid
 
 
+def get_investor_user_by_id(user_id: int) -> dict:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, email, name, role, investor_session_id, created_at FROM users WHERE id=? AND role='investor'",
+        (user_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def get_investor_user(investor_session_id: int) -> dict:
     conn = get_db()
     row = conn.execute(

@@ -619,6 +619,42 @@ def investor_login():
                            fund_name=os.getenv("FUND_NAME", "DDQ Platform"))
 
 
+@app.route("/investor/profile", methods=["GET", "POST"])
+@investor_login_required
+def investor_profile():
+    inv = _current_investor()
+    user = db.get_investor_user_by_id(inv["id"])
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "update_profile":
+            name = request.form.get("name", "").strip()
+            email = request.form.get("email", "").strip()
+            if not name or not email:
+                flash("Name and email are required.", "error")
+            elif db.update_user_profile(inv["id"], name, email):
+                flash("Profile updated.", "success")
+            else:
+                flash("Email already in use.", "error")
+        elif action == "change_password":
+            current = request.form.get("current_password", "")
+            new = request.form.get("new_password", "")
+            confirm = request.form.get("confirm_password", "")
+            if not current or not new or not confirm:
+                flash("All password fields are required.", "error")
+            elif new != confirm:
+                flash("New passwords do not match.", "error")
+            elif len(new) < 6:
+                flash("Password must be at least 6 characters.", "error")
+            elif db.change_user_password(inv["id"], current, new):
+                flash("Password changed successfully.", "success")
+            else:
+                flash("Current password is incorrect.", "error")
+        return redirect(url_for("investor_profile"))
+    return render_template("investor_profile.html",
+                           user=user,
+                           fund_name=os.getenv("FUND_NAME", "the Fund"))
+
+
 @app.route("/investor/logout")
 def investor_logout():
     session.pop("investor_user_id", None)

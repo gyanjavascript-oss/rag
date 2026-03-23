@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Profile | {{ fund_name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    body { background: var(--bg); }
+    .profile-wrap { max-width: 560px; margin: 3rem auto; padding: 0 1.5rem; }
+    .profile-back { display: inline-flex; align-items: center; gap: .4rem; font-size: .875rem; color: var(--muted); margin-bottom: 1.5rem; text-decoration: none; }
+    .profile-back:hover { color: var(--navy); }
+  </style>
+</head>
+<body>
+<div class="profile-wrap">
+
+  <a href="{{ url_for('investor_portal') }}" class="profile-back">← Back to Portal</a>
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">My Profile</div>
+      <div class="page-sub">Manage your account details and password</div>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-container">
+        {% for cat, msg in messages %}
+          <div class="flash flash-{{ cat }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <div style="display:flex; flex-direction:column; gap:1.5rem;">
+
+    <!-- Account Details -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Account Details</div>
+      </div>
+      <div style="padding:1.5rem;">
+        <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem;">
+          <div class="user-avatar" style="width:56px;height:56px;font-size:1.4rem;background:var(--navy);color:var(--white);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            {{ user.name[0].upper() if user.name else 'I' }}
+          </div>
+          <div>
+            <div style="font-weight:700;font-size:1.05rem;">{{ user.name }}</div>
+            <div style="font-size:.8rem;color:var(--muted);margin-top:.2rem;">Investor Portal</div>
+          </div>
+        </div>
+        <form method="POST">
+          <input type="hidden" name="action" value="update_profile">
+          <div class="field-group">
+            <label>Full Name <span class="required">*</span></label>
+            <input type="text" name="name" value="{{ user.name }}" required>
+          </div>
+          <div class="field-group">
+            <label>Email Address <span class="required">*</span></label>
+            <input type="email" name="email" value="{{ user.email }}" required>
+          </div>
+          {% if user.created_at %}
+          <div class="field-group">
+            <label>Member Since</label>
+            <input type="text" value="{{ user.created_at[:10] }}" disabled style="background:var(--bg2);color:var(--muted);">
+          </div>
+          {% endif %}
+          <button type="submit" class="btn-primary">Save Changes</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Change Password -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Change Password</div>
+      </div>
+      <div style="padding:1.5rem;">
+        <form method="POST">
+          <input type="hidden" name="action" value="change_password">
+          <div class="field-group">
+            <label>Current Password <span class="required">*</span></label>
+            <input type="password" name="current_password" required autocomplete="current-password">
+          </div>
+          <div class="field-group">
+            <label>New Password <span class="required">*</span></label>
+            <input type="password" name="new_password" required autocomplete="new-password" minlength="6">
+            <div class="field-hint">Minimum 6 characters.</div>
+          </div>
+          <div class="field-group">
+            <label>Confirm New Password <span class="required">*</span></label>
+            <input type="password" name="confirm_password" required autocomplete="new-password">
+          </div>
+          <button type="submit" class="btn-primary">Update Password</button>
+        </form>
+      </div>
+    </div>
+
+    <div style="text-align:center; padding-bottom:2rem;">
+      <a href="{{ url_for('investor_logout') }}" style="font-size:.85rem; color:var(--muted);">Sign out</a>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
