@@ -370,7 +370,6 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
   font-size: .9rem;
   line-height: 1.65;
   max-width: 100%;
-  white-space: pre-wrap;
   word-break: break-word;
 }
 .msg-user { background: var(--navy); color: var(--white); max-width: 72%; border-radius: 12px 12px 3px 12px; }

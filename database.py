@@ -849,26 +849,24 @@ def delete_kb_entry(entry_id: int):
     conn.close()
 
 
-def _fts_query_strict(query: str) -> str:
-    """Build an FTS5 AND query — all significant terms must be present."""
-    stop = {"the","a","an","is","are","was","were","be","been","being","have","has",
-            "had","do","does","did","will","would","could","should","may","might",
-            "of","in","on","at","to","for","with","by","from","about","and","or","not",
-            "what","how","when","where","who","which","why","can","your","our","my"}
-    words = [w.strip('.,?!;:"()') for w in query.lower().split()]
-    terms = [w for w in words if len(w) > 2 and w not in stop]
-    if not terms:
-        return f'"{query.replace(chr(34), "")}"'
-    return " AND ".join(terms)
+_KB_STOP = {
+    "the","a","an","is","are","was","were","be","been","being","have","has",
+    "had","do","does","did","will","would","could","should","may","might",
+    "of","in","on","at","to","for","with","by","from","about","and","or","not",
+    "what","how","when","where","who","which","why","can","your","our","my","tell",
+    "please","give","me","us","you","its","this","that","these","those","also",
+}
 
 
-def search_kb(query: str, limit: int = 3) -> list[dict]:
-    """Search knowledge base using strict AND query. Returns entries with BM25 score."""
-    conn = get_db()
-    rows = []
+def _kb_terms(query: str) -> list[str]:
+    """Extract significant terms from a query for KB matching."""
+    words = [w.strip('.,?!;:"()[]') for w in query.lower().split()]
+    return [w for w in words if len(w) > 2 and w not in _KB_STOP]
+
+
+def _run_kb_fts(conn, fts_q: str, limit: int) -> list:
     try:
-        fts_q = _fts_query_strict(query)
-        rows = conn.execute("""
+        return conn.execute("""
             SELECT kb.id, kb.question, kb.answer, kb.tags,
                    bm25(kb_fts) as score
             FROM kb_fts
@@ -878,7 +876,27 @@ def search_kb(query: str, limit: int = 3) -> list[dict]:
             LIMIT ?
         """, (fts_q, limit)).fetchall()
     except Exception:
-        rows = []
+        return []
+
+
+def search_kb(query: str, limit: int = 3) -> list[dict]:
+    """Search knowledge base. Tries AND query first, falls back to OR with score filter."""
+    conn = get_db()
+    terms = _kb_terms(query)
+
+    rows = []
+    if terms:
+        # 1. Try strict AND — all keywords must appear in the KB entry
+        and_q = " AND ".join(terms)
+        rows = _run_kb_fts(conn, and_q, limit)
+
+    if not rows and terms:
+        # 2. Fallback: OR query, but only accept results with a decent BM25 score.
+        #    Score threshold -0.5: at least a few terms must genuinely overlap.
+        or_q = " OR ".join(terms)
+        candidates = _run_kb_fts(conn, or_q, limit)
+        rows = [r for r in candidates if r["score"] < -0.5]
+
     conn.close()
     return [dict(r) for r in rows]
 

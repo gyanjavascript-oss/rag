@@ -211,11 +211,8 @@ def _check_knowledge_base(question: str) -> dict | None:
     if not kb_hits:
         return None
     best = kb_hits[0]
-    # BM25 scores are negative — more negative = stronger match.
-    # Threshold -1.5: only use KB when the match is genuinely close.
-    # Weak/partial matches (score > -1.5) fall through to document RAG.
-    if best["score"] > -1.5:
-        return None
+    # The AND query in search_kb already ensures all significant keywords match.
+    # Any result here is a genuine match — no score threshold needed.
     return {
         "answer": best["answer"],
         "sources": [{"doc_name": "Knowledge Base", "section": "Admin-trained answer", "excerpt": best["question"]}],
