@@ -516,12 +516,13 @@ def team():
         flash("Admin access required.", "error")
         return redirect(url_for("dashboard"))
     conn = db.get_db()
-    users = conn.execute("SELECT id, email, name, role, created_at FROM users ORDER BY created_at").fetchall()
+    users = conn.execute("SELECT id, email, name, role, created_at FROM users WHERE role != 'investor' ORDER BY created_at").fetchall()
     conn.close()
     return render_template(
         "team.html",
         user=_current_user(),
         users=[dict(u) for u in users],
+        current_user_id=session["user_id"],
         fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
     )
 
@@ -543,6 +544,36 @@ def add_team_member():
         flash(f"User {name} added.", "success")
     except Exception as e:
         flash(f"Error: {e}", "error")
+    return redirect(url_for("team"))
+
+
+@app.route("/team/user/<int:user_id>/role", methods=["POST"])
+@login_required
+def change_user_role(user_id):
+    if _current_user()["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+    if user_id == session["user_id"]:
+        flash("You cannot change your own role.", "error")
+        return redirect(url_for("team"))
+    role = request.form.get("role", "analyst")
+    if role not in ("admin", "analyst"):
+        flash("Invalid role.", "error")
+        return redirect(url_for("team"))
+    db.update_user_role(user_id, role)
+    flash("Role updated.", "success")
+    return redirect(url_for("team"))
+
+
+@app.route("/team/user/<int:user_id>/delete", methods=["POST"])
+@login_required
+def delete_team_member(user_id):
+    if _current_user()["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+    if user_id == session["user_id"]:
+        flash("You cannot delete your own account.", "error")
+        return redirect(url_for("team"))
+    db.delete_user(user_id)
+    flash("User removed.", "success")
     return redirect(url_for("team"))
 
 

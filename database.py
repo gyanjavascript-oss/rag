@@ -689,6 +689,20 @@ def create_investor_user(email: str, name: str, password: str, investor_session_
     return uid
 
 
+def update_user_role(user_id: int, role: str):
+    conn = get_db()
+    conn.execute("UPDATE users SET role=? WHERE id=? AND role != 'investor'", (role, user_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_user(user_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM users WHERE id=? AND role != 'investor'", (user_id,))
+    conn.commit()
+    conn.close()
+
+
 def get_investor_user_by_id(user_id: int) -> dict:
     conn = get_db()
     row = conn.execute(

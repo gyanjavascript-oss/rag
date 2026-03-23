@@ -4,33 +4,119 @@
 {% block content %}
 <div class="page-header">
   <div>
-    <h1 class="page-title">Team Members</h1>
-    <p class="page-sub">Manage who has access to the DDQ platform.</p>
+    <h1 class="page-title">Team & Access Control</h1>
+    <p class="page-sub">Manage team members, roles, and permissions.</p>
   </div>
   <button class="btn-primary" onclick="document.getElementById('addUserModal').style.display='flex'">
     + Add Member
   </button>
 </div>
 
-<div class="card">
+<!-- ── Team Members ── -->
+<div class="card" style="margin-bottom:1.5rem;">
+  <div class="card-header">
+    <div class="card-title">Team Members</div>
+    <span class="muted" style="font-size:.82rem;">{{ users|length }} member{{ 's' if users|length != 1 }}</span>
+  </div>
   <table class="data-table">
     <thead>
-      <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th></tr>
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Joined</th>
+        <th>Actions</th>
+      </tr>
     </thead>
     <tbody>
       {% for u in users %}
       <tr>
-        <td><strong>{{ u.name }}</strong></td>
+        <td>
+          <div style="display:flex;align-items:center;gap:.6rem;">
+            <div class="user-avatar" style="width:30px;height:30px;font-size:.8rem;flex-shrink:0;">{{ u.name[0] }}</div>
+            <strong>{{ u.name }}</strong>
+            {% if u.id == current_user_id %}<span class="tag tag-sm" style="margin-left:.3rem;">You</span>{% endif %}
+          </div>
+        </td>
         <td>{{ u.email }}</td>
         <td><span class="role-badge role-{{ u.role }}">{{ u.role }}</span></td>
         <td>{{ u.created_at[:10] }}</td>
+        <td>
+          {% if u.id != current_user_id %}
+          <div style="display:flex;gap:.5rem;align-items:center;">
+            <button class="btn-outline btn-sm"
+              onclick="openRoleModal({{ u.id }}, '{{ u.name }}', '{{ u.role }}')">
+              Change Role
+            </button>
+            <form method="POST" action="{{ url_for('delete_team_member', user_id=u.id) }}"
+              onsubmit="return confirm('Remove {{ u.name }} from the team?')">
+              <button type="submit" class="btn-danger-sm">Remove</button>
+            </form>
+          </div>
+          {% else %}
+          <span class="muted" style="font-size:.8rem;">—</span>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 
-<!-- Add User Modal -->
+<!-- ── Roles & Permissions ── -->
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Roles & Permissions</div>
+    <span class="muted" style="font-size:.82rem;">RBAC — what each role can do</span>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="min-width:220px;">Permission</th>
+          <th style="text-align:center;">Admin</th>
+          <th style="text-align:center;">Analyst</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set perms = [
+          ('Dashboard', 'View KPIs, recent activity, and insights', True, True),
+          ('Q&A Sessions', 'Create and manage investor Q&A sessions', True, True),
+          ('Fund Documents', 'View fund documents and search content', True, True),
+          ('Upload Documents', 'Upload and ingest new fund documents', True, False),
+          ('Delete Documents', 'Permanently remove fund documents', True, False),
+          ('Investors', 'View investor sessions and documents', True, True),
+          ('Manage Investors', 'Create/edit investor sessions and assign documents', True, False),
+          ('Analytics', 'View question themes and citation analytics', True, True),
+          ('Knowledge Base', 'View knowledge base entries', True, True),
+          ('Manage Knowledge Base', 'Add, edit, or delete KB entries', True, False),
+          ('Live Support', 'View and join investor live support sessions', True, True),
+          ('Team Management', 'Add/remove team members, change roles', True, False),
+          ('Profile & Password', 'Update own profile and change password', True, True),
+        ] %}
+        {% for label, desc, admin, analyst in perms %}
+        <tr>
+          <td>
+            <div style="font-weight:500;font-size:.875rem;">{{ label }}</div>
+            <div style="font-size:.75rem;color:var(--muted);">{{ desc }}</div>
+          </td>
+          <td style="text-align:center;">
+            {% if admin %}<span style="color:#16a34a;font-size:1.1rem;">✓</span>{% else %}<span style="color:#d1d5db;">—</span>{% endif %}
+          </td>
+          <td style="text-align:center;">
+            {% if analyst %}<span style="color:#16a34a;font-size:1.1rem;">✓</span>{% else %}<span style="color:#d1d5db;">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div style="padding:.85rem 1.5rem;background:var(--bg);border-top:1px solid var(--border);font-size:.8rem;color:var(--muted);">
+    Role changes take effect immediately on next login. Only Admins can access the Team page.
+  </div>
+</div>
+
+<!-- ── Add User Modal ── -->
 <div id="addUserModal" class="modal-overlay" style="display:none;">
   <div class="modal">
     <div class="modal-header">
@@ -53,8 +139,8 @@
       <div class="field-group">
         <label>Role</label>
         <select name="role">
-          <option value="analyst">Analyst</option>
-          <option value="admin">Admin</option>
+          <option value="analyst">Analyst — can view and use all features, no admin actions</option>
+          <option value="admin">Admin — full access including team and document management</option>
         </select>
       </div>
       <div class="modal-footer">
@@ -64,4 +150,39 @@
     </form>
   </div>
 </div>
+
+<!-- ── Change Role Modal ── -->
+<div id="roleModal" class="modal-overlay" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Change Role</h3>
+      <button class="modal-close" onclick="document.getElementById('roleModal').style.display='none'">✕</button>
+    </div>
+    <form id="roleForm" method="POST">
+      <p style="margin-bottom:1rem;font-size:.9rem;">Change role for <strong id="roleUserName"></strong>:</p>
+      <div class="field-group">
+        <label>New Role</label>
+        <select name="role" id="roleSelect">
+          <option value="analyst">Analyst</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-outline" onclick="document.getElementById('roleModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Save Role</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openRoleModal(userId, userName, currentRole) {
+  document.getElementById('roleUserName').textContent = userName;
+  document.getElementById('roleSelect').value = currentRole;
+  document.getElementById('roleForm').action = `/team/user/${userId}/role`;
+  document.getElementById('roleModal').style.display = 'flex';
+}
+</script>
 {% endblock %}
