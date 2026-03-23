@@ -516,12 +516,22 @@ def team():
         flash("Admin access required.", "error")
         return redirect(url_for("dashboard"))
     conn = db.get_db()
-    users = conn.execute("SELECT id, email, name, role, created_at FROM users WHERE role != 'investor' ORDER BY created_at").fetchall()
+    team_users = conn.execute("SELECT id, email, name, role, created_at FROM users WHERE role != 'investor' ORDER BY created_at").fetchall()
+    investor_users = conn.execute("""
+        SELECT u.id, u.email, u.name, u.role, u.created_at, s.investor_name, s.investor_entity
+        FROM users u
+        LEFT JOIN investor_sessions s ON s.id = u.investor_session_id
+        WHERE u.role = 'investor'
+        ORDER BY u.created_at DESC
+    """).fetchall()
     conn.close()
+    roles = db.list_roles()
     return render_template(
         "team.html",
         user=_current_user(),
-        users=[dict(u) for u in users],
+        users=[dict(u) for u in team_users],
+        investor_users=[dict(u) for u in investor_users],
+        roles=roles,
         current_user_id=session["user_id"],
         fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
     )
@@ -574,6 +584,48 @@ def delete_team_member(user_id):
         return redirect(url_for("team"))
     db.delete_user(user_id)
     flash("User removed.", "success")
+    return redirect(url_for("team"))
+
+
+@app.route("/team/roles/add", methods=["POST"])
+@login_required
+def add_role():
+    if _current_user()["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+    name = request.form.get("name", "").strip()
+    description = request.form.get("description", "").strip()
+    permissions = request.form.getlist("permissions")
+    if not name:
+        flash("Role name is required.", "error")
+        return redirect(url_for("team"))
+    try:
+        db.create_role(name, description, permissions)
+        flash(f"Role '{name}' created.", "success")
+    except Exception as e:
+        flash(f"Error: role name already exists.", "error")
+    return redirect(url_for("team"))
+
+
+@app.route("/team/roles/<int:role_id>/edit", methods=["POST"])
+@login_required
+def edit_role(role_id):
+    if _current_user()["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+    name = request.form.get("name", "").strip()
+    description = request.form.get("description", "").strip()
+    permissions = request.form.getlist("permissions")
+    db.update_role(role_id, name, description, permissions)
+    flash("Role updated.", "success")
+    return redirect(url_for("team"))
+
+
+@app.route("/team/roles/<int:role_id>/delete", methods=["POST"])
+@login_required
+def delete_role(role_id):
+    if _current_user()["role"] != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+    db.delete_role(role_id)
+    flash("Role deleted.", "success")
     return redirect(url_for("team"))
 
 

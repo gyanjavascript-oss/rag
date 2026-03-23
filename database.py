@@ -191,6 +191,24 @@ def init_db():
         );
     """)
 
+    # Roles table for RBAC
+    c.executescript("""
+        CREATE TABLE IF NOT EXISTS roles (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT UNIQUE NOT NULL,
+            description TEXT,
+            permissions TEXT NOT NULL DEFAULT '[]',
+            is_system   INTEGER DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+    """)
+
+    # Seed system roles
+    all_perms = '["dashboard","qa_sessions","upload_documents","delete_documents","manage_investors","manage_kb","live_support","team_management","analytics"]'
+    analyst_perms = '["dashboard","qa_sessions","live_support","analytics"]'
+    c.execute("INSERT OR IGNORE INTO roles (name, description, permissions, is_system) VALUES ('admin', 'Full access to all features', ?, 1)", (all_perms,))
+    c.execute("INSERT OR IGNORE INTO roles (name, description, permissions, is_system) VALUES ('analyst', 'View and use core features, no admin actions', ?, 1)", (analyst_perms,))
+
     # Migrations for columns added after initial release
     for migration in [
         "ALTER TABLE users ADD COLUMN investor_session_id INTEGER REFERENCES investor_sessions(id)",
@@ -687,6 +705,58 @@ def create_investor_user(email: str, name: str, password: str, investor_session_
     uid = c.lastrowid
     conn.close()
     return uid
+
+
+def list_roles() -> list:
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM roles ORDER BY is_system DESC, name").fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["permissions"] = json.loads(d["permissions"] or "[]")
+        result.append(d)
+    return result
+
+
+def get_role(role_id: int) -> dict:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM roles WHERE id=?", (role_id,)).fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    d["permissions"] = json.loads(d["permissions"] or "[]")
+    return d
+
+
+def create_role(name: str, description: str, permissions: list) -> int:
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("INSERT INTO roles (name, description, permissions) VALUES (?, ?, ?)",
+              (name.lower().replace(" ", "_"), description, json.dumps(permissions)))
+    conn.commit()
+    rid = c.lastrowid
+    conn.close()
+    return rid
+
+
+def update_role(role_id: int, name: str, description: str, permissions: list):
+    conn = get_db()
+    conn.execute("UPDATE roles SET name=?, description=?, permissions=? WHERE id=? AND is_system=0",
+                 (name.lower().replace(" ", "_"), description, json.dumps(permissions), role_id))
+    # System roles: only update permissions
+    conn.execute("UPDATE roles SET permissions=? WHERE id=? AND is_system=1",
+                 (json.dumps(permissions), role_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_role(role_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM roles WHERE id=? AND is_system=0", (role_id,))
+    conn.commit()
+    conn.close()
 
 
 def update_user_role(user_id: int, role: str):
