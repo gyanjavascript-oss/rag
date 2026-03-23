@@ -211,8 +211,9 @@ def _check_knowledge_base(question: str) -> dict | None:
     if not kb_hits:
         return None
     best = kb_hits[0]
-    # BM25 scores are negative; closer to 0 = better match. Use -2.0 as threshold.
-    if best["score"] > -2.0:
+    # BM25 scores are negative; any match (score < 0) means FTS found a hit.
+    # Admin-curated KB is small and intentionally trained, so accept all hits.
+    if best["score"] >= 0:
         return None
     return {
         "answer": best["answer"],
