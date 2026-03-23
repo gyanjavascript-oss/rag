@@ -743,11 +743,21 @@ def create_role(name: str, description: str, permissions: list) -> int:
 
 def update_role(role_id: int, name: str, description: str, permissions: list):
     conn = get_db()
-    conn.execute("UPDATE roles SET name=?, description=?, permissions=? WHERE id=? AND is_system=0",
-                 (name.lower().replace(" ", "_"), description, json.dumps(permissions), role_id))
-    # System roles: only update permissions
-    conn.execute("UPDATE roles SET permissions=? WHERE id=? AND is_system=1",
-                 (json.dumps(permissions), role_id))
+    role = conn.execute("SELECT name, is_system FROM roles WHERE id=?", (role_id,)).fetchone()
+    if not role:
+        conn.close()
+        return
+    # Admin always keeps full permissions — never editable
+    if role["name"] == "admin":
+        conn.close()
+        return
+    if role["is_system"]:
+        # System roles (non-admin): update permissions only
+        conn.execute("UPDATE roles SET permissions=? WHERE id=?", (json.dumps(permissions), role_id))
+    else:
+        # Custom roles: update everything
+        conn.execute("UPDATE roles SET name=?, description=?, permissions=? WHERE id=?",
+                     (name.lower().replace(" ", "_"), description, json.dumps(permissions), role_id))
     conn.commit()
     conn.close()
 

@@ -276,6 +276,9 @@
       <button class="modal-close" onclick="document.getElementById('editRoleModal').style.display='none'">✕</button>
     </div>
     <form id="editRoleForm" method="POST">
+      <div id="editRoleAdminNote" style="display:none;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:.6rem .85rem;font-size:.82rem;color:#92400e;margin-bottom:1rem;">
+        Admin always has full access to all permissions. This cannot be changed.
+      </div>
       <div id="editRoleSystemNote" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:.6rem .85rem;font-size:.82rem;color:#1d4ed8;margin-bottom:1rem;">
         This is a system role. You can edit its permissions but not its name.
       </div>
@@ -334,15 +337,18 @@ function openRoleModal(userId, userName, currentRole) {
 }
 
 function openEditRoleModal(role) {
+  const isAdmin = role.name === 'admin';
   document.getElementById('editRoleForm').action = `/team/roles/${role.id}/edit`;
   document.getElementById('editRoleName').value = role.name;
   document.getElementById('editRoleDesc').value = role.description || '';
   document.getElementById('editRoleName').disabled = role.is_system == 1;
-  document.getElementById('editRoleSystemNote').style.display = role.is_system ? 'block' : 'none';
+  document.getElementById('editRoleAdminNote').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('editRoleSystemNote').style.display = (!isAdmin && role.is_system) ? 'block' : 'none';
   // Set checkboxes
   const perms = role.permissions || [];
   document.querySelectorAll('#editPermGrid input[type=checkbox]').forEach(cb => {
-    cb.checked = perms.includes(cb.dataset.key);
+    cb.checked = isAdmin ? true : perms.includes(cb.dataset.key);
+    cb.disabled = isAdmin;
   });
   document.getElementById('editRoleModal').style.display = 'flex';
 }
