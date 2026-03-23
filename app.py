@@ -7,7 +7,7 @@ import uuid
 from functools import wraps
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, jsonify, Response, stream_with_context
+    session, flash, jsonify, Response, stream_with_context, send_file
 )
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
@@ -305,6 +305,44 @@ def delete_document(doc_id):
     db.delete_fund_document(doc_id)
     flash("Document removed.", "success")
     return redirect(url_for("documents"))
+
+
+@app.route("/documents/<int:doc_id>/view")
+@login_required
+def view_document(doc_id):
+    """Serve a fund document inline for in-browser viewing (admin/analyst)."""
+    conn = db.get_db()
+    doc = conn.execute("SELECT * FROM fund_documents WHERE id=?", (doc_id,)).fetchone()
+    conn.close()
+    if not doc:
+        flash("Document not found.", "error")
+        return redirect(url_for("documents"))
+    filepath = doc["filepath"]
+    if not filepath or not os.path.exists(os.path.join(UPLOAD_FOLDER, os.path.basename(filepath))):
+        flash("File not available.", "error")
+        return redirect(url_for("documents"))
+    full_path = os.path.join(UPLOAD_FOLDER, os.path.basename(filepath))
+    return send_file(full_path, as_attachment=False)
+
+
+@app.route("/investor/documents/<int:doc_id>/view")
+@investor_login_required
+def investor_view_document(doc_id):
+    """Serve an assigned fund document inline for investor in-browser viewing."""
+    inv = _current_investor()
+    assigned_ids = db.get_assigned_document_ids(inv["session_id"])
+    if doc_id not in assigned_ids:
+        return "Access denied", 403
+    conn = db.get_db()
+    doc = conn.execute("SELECT * FROM fund_documents WHERE id=?", (doc_id,)).fetchone()
+    conn.close()
+    if not doc:
+        return "Not found", 404
+    filepath = doc["filepath"]
+    if not filepath or not os.path.exists(os.path.join(UPLOAD_FOLDER, os.path.basename(filepath))):
+        return "File not available", 404
+    full_path = os.path.join(UPLOAD_FOLDER, os.path.basename(filepath))
+    return send_file(full_path, as_attachment=False)
 
 
 # ── Investor Sessions ─────────────────────────────────────────────────────────

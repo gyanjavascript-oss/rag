@@ -57,7 +57,10 @@
         <td><span class="type-badge type-{{ doc.doc_type|lower }}">{{ doc.doc_type }}</span></td>
         <td>{{ doc.uploaded_by_name or '—' }}</td>
         <td>{{ doc.uploaded_at[:10] }}</td>
-        <td>
+        <td style="display:flex;gap:.4rem;align-items:center;">
+          {% if doc.filepath %}
+          <a href="{{ url_for('view_document', doc_id=doc.id) }}" target="_blank" class="btn-outline btn-sm">View</a>
+          {% endif %}
           <form method="POST" action="{{ url_for('delete_document', doc_id=doc.id) }}"
                 onsubmit="return confirm('Remove this document from the index?')">
             <button class="btn-danger-sm">Remove</button>

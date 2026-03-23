@@ -158,10 +158,12 @@
     <div class="portal-sidebar-section">Available Documents</div>
     <div class="portal-doc-list">
       {% for d in assigned_docs %}
-      <div class="portal-doc-item">
+      <a href="{{ url_for('investor_view_document', doc_id=d.id) }}" target="_blank"
+         class="portal-doc-item" style="text-decoration:none;cursor:pointer;" title="Click to view {{ d.name }}">
         <span class="portal-doc-dot"></span>
-        <span>{{ d.name }}</span>
-      </div>
+        <span style="flex:1;">{{ d.name }}</span>
+        <span style="font-size:.65rem;opacity:.5;">↗</span>
+      </a>
       {% endfor %}
     </div>
     {% endif %}
