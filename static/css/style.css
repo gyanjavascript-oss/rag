@@ -301,7 +301,7 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
 .role-analyst { background: var(--bg2); color: var(--muted); }
 
 /* ── Dashboard specifics ─────────────────────────────────────────────────────── */
-.question-list { padding: .5rem 0; }
+.question-list { padding: .5rem 0; max-height: 420px; overflow-y: auto; }
 .question-item { padding: .85rem 1.5rem; border-bottom: 1px solid var(--bg2); }
 .question-item:last-child { border-bottom: none; }
 .question-text { font-size: .875rem; margin-bottom: .35rem; }
