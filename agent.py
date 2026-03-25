@@ -19,6 +19,7 @@ from database import (
     search_kb,
     get_active_llm_keys,
     log_llm_usage,
+    get_env_key_sentinel_id,
 )
 from llm_crypto import decrypt_key
 
@@ -68,10 +69,10 @@ def _get_clients() -> list:
 
     if result:
         return result
-    # Fallback to env var
+    # Fallback to env var — use sentinel ID so usage is still tracked
     env_key = os.getenv("OPENAI_API_KEY")
     if env_key:
-        return [(None, MODEL, "openai", OpenAI(api_key=env_key))]
+        return [(get_env_key_sentinel_id(), MODEL, "openai", OpenAI(api_key=env_key))]
     return []
 
 

@@ -247,6 +247,12 @@ def init_db():
         except Exception:
             pass
 
+    # Seed sentinel LLM key for env-var usage tracking
+    c.execute("""
+        INSERT OR IGNORE INTO llm_keys (id, name, provider, model, api_key_enc, api_key_hint, priority, is_active)
+        VALUES (1, 'Environment Key (OPENAI_API_KEY)', 'openai', 'gpt-4o', '', 'env', 999, 0)
+    """)
+
     # Seed default admin user
     admin_hash = _hash("admin123")
     c.execute("""
@@ -1145,9 +1151,20 @@ COST_RATES = {
 }
 
 
+def get_env_key_sentinel_id() -> int:
+    """Returns the ID of the sentinel row used to track env-var key usage."""
+    conn = get_db()
+    row = conn.execute("SELECT id FROM llm_keys WHERE api_key_hint='env' LIMIT 1").fetchone()
+    conn.close()
+    return row["id"] if row else 1
+
+
 def list_llm_keys() -> list:
     conn = get_db()
-    rows = conn.execute("SELECT * FROM llm_keys ORDER BY priority ASC, id ASC").fetchall()
+    # Exclude the internal sentinel row from the admin UI
+    rows = conn.execute(
+        "SELECT * FROM llm_keys WHERE api_key_hint != 'env' ORDER BY priority ASC, id ASC"
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -1155,7 +1172,7 @@ def list_llm_keys() -> list:
 def get_active_llm_keys() -> list:
     conn = get_db()
     rows = conn.execute(
-        "SELECT * FROM llm_keys WHERE is_active=1 ORDER BY priority ASC, id ASC"
+        "SELECT * FROM llm_keys WHERE is_active=1 AND api_key_hint != 'env' ORDER BY priority ASC, id ASC"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -1247,16 +1264,18 @@ def get_llm_usage_stats() -> list:
     conn = get_db()
     rows = conn.execute("""
         SELECT
-            k.id, k.name, k.provider, k.model, k.is_active, k.priority, k.api_key_hint,
-            COALESCE(SUM(u.input_tokens), 0)  AS total_input,
-            COALESCE(SUM(u.output_tokens), 0) AS total_output,
-            COALESCE(SUM(u.cost_usd), 0)      AS total_cost,
-            COUNT(u.id)                        AS total_calls,
-            MAX(u.created_at)                  AS last_used
+            k.name,
+            COALESCE(u.model, k.model)         AS model,
+            COALESCE(SUM(u.input_tokens), 0)   AS total_input,
+            COALESCE(SUM(u.output_tokens), 0)  AS total_output,
+            COALESCE(SUM(u.cost_usd), 0)       AS total_cost,
+            COUNT(u.id)                         AS requests,
+            MAX(u.created_at)                   AS last_used
         FROM llm_keys k
         LEFT JOIN llm_usage u ON u.llm_key_id = k.id
-        GROUP BY k.id
+        GROUP BY k.id, u.model
         ORDER BY k.priority ASC, k.id ASC
     """).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    # Only return rows that have either had usage or are active real keys
+    return [dict(r) for r in rows if r["requests"] > 0]
