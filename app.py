@@ -1100,5 +1100,89 @@ def kb_delete(entry_id):
     return redirect(url_for("knowledge_base"))
 
 
+# ── LLM Key Management ────────────────────────────────────────────────────────
+
+@app.route("/admin/llm-keys")
+@login_required
+def llm_keys():
+    if _current_user().get("role") != "admin":
+        flash("Access denied.", "error")
+        return redirect(url_for("admin_index"))
+    keys = db.list_llm_keys()
+    stats = db.get_llm_usage_stats()
+    return render_template(
+        "llm_keys.html",
+        user=_current_user(),
+        keys=keys,
+        stats=stats,
+        fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
+    )
+
+
+@app.route("/admin/llm-keys/add", methods=["POST"])
+@login_required
+def llm_keys_add():
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Access denied"}), 403
+    from llm_crypto import encrypt_key
+    name = request.form.get("name", "").strip()
+    provider = request.form.get("provider", "openai").strip()
+    model = request.form.get("model", "gpt-4o").strip()
+    api_key = request.form.get("api_key", "").strip()
+    if not name or not api_key:
+        flash("Name and API key are required.", "error")
+        return redirect(url_for("llm_keys"))
+    hint = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
+    enc = encrypt_key(api_key)
+    db.add_llm_key(name, provider, model, enc, hint)
+    flash("LLM key added.", "success")
+    return redirect(url_for("llm_keys"))
+
+
+@app.route("/admin/llm-keys/<int:key_id>/edit", methods=["POST"])
+@login_required
+def llm_keys_edit(key_id):
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Access denied"}), 403
+    from llm_crypto import encrypt_key
+    name = request.form.get("name", "").strip()
+    model = request.form.get("model", "").strip()
+    is_active = request.form.get("is_active") == "1"
+    api_key = request.form.get("api_key", "").strip()
+    updates = {}
+    if name:
+        updates["name"] = name
+    if model:
+        updates["model"] = model
+    updates["is_active"] = 1 if is_active else 0
+    if api_key:
+        updates["api_key_enc"] = encrypt_key(api_key)
+        updates["api_key_hint"] = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
+    db.update_llm_key(key_id, **updates)
+    flash("LLM key updated.", "success")
+    return redirect(url_for("llm_keys"))
+
+
+@app.route("/admin/llm-keys/<int:key_id>/delete", methods=["POST"])
+@login_required
+def llm_keys_delete(key_id):
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Access denied"}), 403
+    db.delete_llm_key(key_id)
+    flash("LLM key deleted.", "success")
+    return redirect(url_for("llm_keys"))
+
+
+@app.route("/admin/llm-keys/<int:key_id>/move", methods=["POST"])
+@login_required
+def llm_keys_move(key_id):
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Access denied"}), 403
+    direction = request.form.get("direction")
+    if direction in ("up", "down"):
+        db.move_llm_key(key_id, direction)
+    return redirect(url_for("llm_keys"))
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

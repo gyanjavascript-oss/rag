@@ -17,10 +17,33 @@ from database import (
     search_investor_documents,
     find_similar_questions,
     search_kb,
+    get_active_llm_keys,
+    log_llm_usage,
 )
+from llm_crypto import decrypt_key
 
 FUND_NAME = os.getenv("FUND_NAME", "the Fund")
 MODEL = "gpt-4o"
+
+
+def _get_openai_clients() -> list:
+    """Returns [(key_id, model, client), ...] sorted by priority. Falls back to env var."""
+    keys = [k for k in get_active_llm_keys() if k["provider"] == "openai"]
+    if keys:
+        result = []
+        for k in keys:
+            try:
+                client = OpenAI(api_key=decrypt_key(k["api_key_enc"]))
+                result.append((k["id"], k["model"], client))
+            except Exception:
+                continue
+        if result:
+            return result
+    # Fallback to env var
+    env_key = os.getenv("OPENAI_API_KEY")
+    if env_key:
+        return [(None, MODEL, OpenAI(api_key=env_key))]
+    return []
 
 SYSTEM_PROMPT = f"""You are an expert DDQ (Due Diligence Questionnaire) assistant for {FUND_NAME}.
 
@@ -233,45 +256,49 @@ def answer_question(
     is_investor: bool = False,
 ) -> dict:
     """Run the DDQ agent. Returns parsed dict with answer, sources, draft_response, themes."""
-    # Check admin knowledge base first
     kb_result = _check_knowledge_base(question)
     if kb_result:
         return kb_result
 
-    client = OpenAI()
-    messages = _build_messages(question, conversation_history)
+    clients = _get_openai_clients()
+    if not clients:
+        return _fallback()
 
-    if investor_name:
-        messages[0]["content"] += f"\n\nCURRENT INVESTOR: {investor_name}"
-        if investor_session_id:
-            messages[0]["content"] += f" (investor_session_id: {investor_session_id})"
-            messages[0]["content"] += "\nInvestor-specific documents are available — search them."
+    for key_id, model, client in clients:
+        try:
+            messages = _build_messages(question, conversation_history)
+            if investor_name:
+                messages[0]["content"] += f"\n\nCURRENT INVESTOR: {investor_name}"
+                if investor_session_id:
+                    messages[0]["content"] += f" (investor_session_id: {investor_session_id})"
+                    messages[0]["content"] += "\nInvestor-specific documents are available — search them."
 
-    # First call: force a document search
-    first_call = True
-    for _ in range(6):
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice={"type": "function", "function": {"name": "search_fund_documents"}} if first_call else "auto",
-            response_format={"type": "json_object"},
-        )
-        first_call = False
-        msg = response.choices[0].message
+            first_call = True
+            for _ in range(6):
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice={"type": "function", "function": {"name": "search_fund_documents"}} if first_call else "auto",
+                    response_format={"type": "json_object"},
+                )
+                first_call = False
+                msg = response.choices[0].message
 
-        if msg.tool_calls:
-            messages.append(msg)
-            for tc in msg.tool_calls:
-                args = json.loads(tc.function.arguments)
-                result = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
-        else:
-            return _parse_response(msg.content or "")
+                if msg.tool_calls:
+                    messages.append(msg)
+                    for tc in msg.tool_calls:
+                        args = json.loads(tc.function.arguments)
+                        result = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
+                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                else:
+                    if key_id and response.usage:
+                        log_llm_usage(key_id, "openai", model,
+                                      response.usage.prompt_tokens,
+                                      response.usage.completion_tokens)
+                    return _parse_response(msg.content or "")
+        except Exception:
+            continue  # try next key
 
     return _fallback()
 
@@ -293,50 +320,62 @@ def stream_answer(
         yield f"data: {json.dumps({'type': 'result', 'data': kb_result})}\n\n"
         return
 
-    client = OpenAI()
-    messages = _build_messages(question, conversation_history)
+    clients = _get_openai_clients()
+    if not clients:
+        yield f"data: {json.dumps({'type': 'error', 'message': 'No LLM keys configured.'})}\n\n"
+        return
 
+    messages = _build_messages(question, conversation_history)
     if investor_name:
         messages[0]["content"] += f"\n\nCURRENT INVESTOR: {investor_name}"
         if investor_session_id:
             messages[0]["content"] += f" (investor_session_id: {investor_session_id})"
             messages[0]["content"] += "\nInvestor-specific documents are available — search them."
 
-    first_call = True
-    for _ in range(6):
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice={"type": "function", "function": {"name": "search_fund_documents"}} if first_call else "auto",
-            response_format={"type": "json_object"},
-        )
-        first_call = False
-        msg = response.choices[0].message
+    for key_id, model, client in clients:
+        try:
+            msgs = [m.copy() for m in messages]  # fresh copy per key attempt
+            first_call = True
+            for _ in range(6):
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=msgs,
+                    tools=TOOLS,
+                    tool_choice={"type": "function", "function": {"name": "search_fund_documents"}} if first_call else "auto",
+                    response_format={"type": "json_object"},
+                )
+                first_call = False
+                msg = response.choices[0].message
 
-        if msg.tool_calls:
-            messages.append(msg)
-            for tc in msg.tool_calls:
-                yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc.function.name})}\n\n"
-                args = json.loads(tc.function.arguments)
-                result = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
-        else:
-            parsed = _parse_response(msg.content or "")
-            answer = parsed.get("answer", "")
-            # Stream answer word-by-word for typing effect
-            if answer:
-                words = answer.split(" ")
-                for i, word in enumerate(words):
-                    token = word + (" " if i < len(words) - 1 else "")
-                    yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
-            # Send full result (sources, themes, meta) after tokens
-            yield f"data: {json.dumps({'type': 'result', 'data': parsed})}\n\n"
-            return
+                if msg.tool_calls:
+                    msgs.append(msg)
+                    for tc in msg.tool_calls:
+                        yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc.function.name})}\n\n"
+                        args = json.loads(tc.function.arguments)
+                        result = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
+                        msgs.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result,
+                        })
+                else:
+                    if key_id and response.usage:
+                        log_llm_usage(key_id, "openai", model,
+                                      response.usage.prompt_tokens,
+                                      response.usage.completion_tokens)
+                    parsed = _parse_response(msg.content or "")
+                    answer = parsed.get("answer", "")
+                    # Stream answer word-by-word for typing effect
+                    if answer:
+                        words = answer.split(" ")
+                        for i, word in enumerate(words):
+                            token = word + (" " if i < len(words) - 1 else "")
+                            yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+                    # Send full result (sources, themes, meta) after tokens
+                    yield f"data: {json.dumps({'type': 'result', 'data': parsed})}\n\n"
+                    return
+        except Exception:
+            continue  # try next key
 
     yield f"data: {json.dumps({'type': 'error', 'message': 'Max iterations reached'})}\n\n"
 

@@ -57,6 +57,9 @@
       <a href="{{ url_for('team') }}" class="nav-item {% if request.endpoint == 'team' %}active{% endif %}">
         <span class="nav-icon">◉</span> Team
       </a>
+      <a href="{{ url_for('llm_keys') }}" class="nav-item {% if request.endpoint in ['llm_keys','llm_keys_add','llm_keys_edit','llm_keys_delete','llm_keys_move'] %}active{% endif %}">
+        <span class="nav-icon">🔑</span> LLM Keys
+      </a>
       {% endif %}
     </div>
 

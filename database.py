@@ -209,10 +209,37 @@ def init_db():
     c.execute("INSERT OR IGNORE INTO roles (name, description, permissions, is_system) VALUES ('admin', 'Full access to all features', ?, 1)", (all_perms,))
     c.execute("INSERT OR IGNORE INTO roles (name, description, permissions, is_system) VALUES ('analyst', 'View and use core features, no admin actions', ?, 1)", (analyst_perms,))
 
+    # LLM key management tables
+    c.executescript("""
+        CREATE TABLE IF NOT EXISTS llm_keys (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            name         TEXT NOT NULL,
+            provider     TEXT NOT NULL DEFAULT 'openai',
+            model        TEXT NOT NULL DEFAULT 'gpt-4o',
+            api_key_enc  TEXT NOT NULL,
+            api_key_hint TEXT DEFAULT '',
+            priority     INTEGER NOT NULL DEFAULT 10,
+            is_active    INTEGER NOT NULL DEFAULT 1,
+            created_at   TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS llm_usage (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            llm_key_id    INTEGER NOT NULL,
+            provider      TEXT NOT NULL,
+            model         TEXT NOT NULL,
+            input_tokens  INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cost_usd      REAL DEFAULT 0.0,
+            created_at    TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (llm_key_id) REFERENCES llm_keys(id) ON DELETE CASCADE
+        );
+    """)
+
     # Migrations for columns added after initial release
     for migration in [
         "ALTER TABLE users ADD COLUMN investor_session_id INTEGER REFERENCES investor_sessions(id)",
         "ALTER TABLE conversations ADD COLUMN status TEXT DEFAULT 'active'",
+        "ALTER TABLE llm_keys ADD COLUMN api_key_hint TEXT DEFAULT ''",
     ]:
         try:
             c.execute(migration)
@@ -1076,3 +1103,134 @@ def get_recent_questions(limit: int = 20) -> list[dict]:
         d["themes"] = json.loads(d["themes"]) if d["themes"] else []
         results.append(d)
     return results
+
+
+# ── LLM Key Management ────────────────────────────────────────────────────────
+
+COST_RATES = {
+    "gpt-4o":                    {"input": 5.00,  "output": 15.00},
+    "gpt-4o-mini":               {"input": 0.15,  "output": 0.60},
+    "gpt-4":                     {"input": 30.00, "output": 60.00},
+    "gpt-4-turbo":               {"input": 10.00, "output": 30.00},
+    "gpt-3.5-turbo":             {"input": 0.50,  "output": 1.50},
+    "claude-3-5-sonnet-20241022":{"input": 3.00,  "output": 15.00},
+    "claude-3-5-haiku-20241022": {"input": 0.80,  "output": 4.00},
+    "claude-3-haiku-20240307":   {"input": 0.25,  "output": 1.25},
+    "claude-3-opus-20240229":    {"input": 15.00, "output": 75.00},
+}
+
+
+def list_llm_keys() -> list:
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM llm_keys ORDER BY priority ASC, id ASC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_active_llm_keys() -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM llm_keys WHERE is_active=1 ORDER BY priority ASC, id ASC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_llm_key(key_id: int) -> dict:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM llm_keys WHERE id=?", (key_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_llm_key(name: str, provider: str, model: str, api_key_enc: str, hint: str, priority: int = None) -> int:
+    conn = get_db()
+    c = conn.cursor()
+    if priority is None:
+        row = conn.execute("SELECT MAX(priority) FROM llm_keys").fetchone()
+        priority = (row[0] or 0) + 1
+    c.execute(
+        "INSERT INTO llm_keys (name, provider, model, api_key_enc, api_key_hint, priority) VALUES (?,?,?,?,?,?)",
+        (name, provider, model, api_key_enc, hint, priority)
+    )
+    conn.commit()
+    rid = c.lastrowid
+    conn.close()
+    return rid
+
+
+def update_llm_key(key_id: int, **kwargs):
+    if not kwargs:
+        return
+    allowed = {"name", "model", "priority", "is_active", "api_key_enc", "api_key_hint"}
+    fields = {k: v for k, v in kwargs.items() if k in allowed}
+    if not fields:
+        return
+    set_clause = ", ".join(f"{k}=?" for k in fields)
+    values = list(fields.values()) + [key_id]
+    conn = get_db()
+    conn.execute(f"UPDATE llm_keys SET {set_clause} WHERE id=?", values)
+    conn.commit()
+    conn.close()
+
+
+def delete_llm_key(key_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM llm_keys WHERE id=?", (key_id,))
+    conn.commit()
+    conn.close()
+
+
+def move_llm_key(key_id: int, direction: str):
+    conn = get_db()
+    row = conn.execute("SELECT priority FROM llm_keys WHERE id=?", (key_id,)).fetchone()
+    if not row:
+        conn.close()
+        return
+    cur = row["priority"]
+    if direction == "up":
+        neighbor = conn.execute(
+            "SELECT id, priority FROM llm_keys WHERE priority < ? ORDER BY priority DESC LIMIT 1",
+            (cur,)
+        ).fetchone()
+    else:
+        neighbor = conn.execute(
+            "SELECT id, priority FROM llm_keys WHERE priority > ? ORDER BY priority ASC LIMIT 1",
+            (cur,)
+        ).fetchone()
+    if neighbor:
+        conn.execute("UPDATE llm_keys SET priority=? WHERE id=?", (neighbor["priority"], key_id))
+        conn.execute("UPDATE llm_keys SET priority=? WHERE id=?", (cur, neighbor["id"]))
+        conn.commit()
+    conn.close()
+
+
+def log_llm_usage(key_id: int, provider: str, model: str, input_tokens: int, output_tokens: int):
+    rates = COST_RATES.get(model, {"input": 0, "output": 0})
+    cost = (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO llm_usage (llm_key_id, provider, model, input_tokens, output_tokens, cost_usd) VALUES (?,?,?,?,?,?)",
+        (key_id, provider, model, input_tokens, output_tokens, cost)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_llm_usage_stats() -> list:
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT
+            k.id, k.name, k.provider, k.model, k.is_active, k.priority, k.api_key_hint,
+            COALESCE(SUM(u.input_tokens), 0)  AS total_input,
+            COALESCE(SUM(u.output_tokens), 0) AS total_output,
+            COALESCE(SUM(u.cost_usd), 0)      AS total_cost,
+            COUNT(u.id)                        AS total_calls,
+            MAX(u.created_at)                  AS last_used
+        FROM llm_keys k
+        LEFT JOIN llm_usage u ON u.llm_key_id = k.id
+        GROUP BY k.id
+        ORDER BY k.priority ASC, k.id ASC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

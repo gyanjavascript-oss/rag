@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}LLM Keys{% endblock %}
+
+{% block head %}
+<style>
+.llm-grid { display: grid; grid-template-columns: 1fr 380px; gap: 1.5rem; align-items: start; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.4rem; }
+.card-title { font-size: .95rem; font-weight: 700; color: var(--navy); margin-bottom: 1.1rem; }
+.key-row { display: flex; align-items: center; gap: .75rem; padding: .85rem 0; border-bottom: 1px solid var(--border); }
+.key-row:last-child { border-bottom: none; }
+.priority-badge { min-width: 26px; height: 26px; border-radius: 50%; background: var(--navy); color: #fff; font-size: .75rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.key-info { flex: 1; min-width: 0; }
+.key-name { font-weight: 600; font-size: .88rem; color: var(--navy); }
+.key-meta { font-size: .76rem; color: var(--muted); margin-top: .15rem; }
+.key-hint { font-family: monospace; font-size: .78rem; color: #666; background: #f4f4f4; border-radius: 4px; padding: 1px 6px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+.status-dot.inactive { background: #d1d5db; }
+.key-actions { display: flex; gap: .3rem; flex-shrink: 0; }
+.btn-icon { background: none; border: 1px solid var(--border); border-radius: 5px; padding: .2rem .45rem; font-size: .78rem; cursor: pointer; color: var(--text); transition: background .15s; }
+.btn-icon:hover { background: var(--bg); }
+.btn-icon.danger:hover { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
+.field-group { margin-bottom: 1rem; }
+.field-group label { display: block; font-size: .82rem; font-weight: 600; margin-bottom: .3rem; color: var(--text); }
+.field-group input, .field-group select {
+  width: 100%; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: 6px;
+  font-size: .875rem; font-family: inherit; background: var(--surface); color: var(--text);
+  box-sizing: border-box;
+}
+.field-group input:focus, .field-group select:focus { outline: none; border-color: var(--navy); }
+.field-hint { font-size: .75rem; color: var(--muted); margin-top: .25rem; }
+.empty-state { padding: 2.5rem; text-align: center; color: var(--muted); font-size: .875rem; }
+
+/* Usage table */
+.usage-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.usage-table th { text-align: left; padding: .5rem .75rem; font-size: .78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; border-bottom: 2px solid var(--border); }
+.usage-table td { padding: .65rem .75rem; border-bottom: 1px solid var(--border); }
+.usage-table tr:last-child td { border-bottom: none; }
+.cost-val { font-weight: 600; color: var(--navy); }
+
+/* Modal */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:1000; align-items:center; justify-content:center; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:12px; padding:1.8rem; width:420px; max-width:95vw; box-shadow:0 8px 32px rgba(0,0,0,.18); }
+.modal-title { font-size:1rem; font-weight:700; color:var(--navy); margin-bottom:1.2rem; }
+.modal-actions { display:flex; gap:.6rem; justify-content:flex-end; margin-top:1.2rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">LLM Keys</h1>
+  <p class="page-subtitle">Manage API keys, priority order, and monitor token usage costs.</p>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}
+  <div class="alert alert-{{ category }}" style="margin-bottom:1rem;">{{ message }}</div>
+  {% endfor %}
+{% endwith %}
+
+<div class="llm-grid">
+  <!-- Left: Keys list + usage stats -->
+  <div>
+    <!-- Keys list -->
+    <div class="card" style="margin-bottom:1.5rem;">
+      <div class="card-title">API Keys — Priority Order</div>
+      {% if keys %}
+        {% for key in keys %}
+        <div class="key-row">
+          <div class="priority-badge">{{ loop.index }}</div>
+          <div class="status-dot {% if not key.is_active %}inactive{% endif %}" title="{{ 'Active' if key.is_active else 'Inactive' }}"></div>
+          <div class="key-info">
+            <div class="key-name">{{ key.name }}</div>
+            <div class="key-meta">
+              {{ key.provider }} · {{ key.model }}
+              &nbsp;<span class="key-hint">{{ key.api_key_hint or '***' }}</span>
+            </div>
+          </div>
+          <div class="key-actions">
+            {% if not loop.first %}
+            <form method="post" action="{{ url_for('llm_keys_move', key_id=key.id) }}">
+              <input type="hidden" name="direction" value="up">
+              <button class="btn-icon" title="Move up">↑</button>
+            </form>
+            {% endif %}
+            {% if not loop.last %}
+            <form method="post" action="{{ url_for('llm_keys_move', key_id=key.id) }}">
+              <input type="hidden" name="direction" value="down">
+              <button class="btn-icon" title="Move down">↓</button>
+            </form>
+            {% endif %}
+            <button class="btn-icon" onclick="openEditModal({{ key.id }}, '{{ key.name }}', '{{ key.provider }}', '{{ key.model }}', {{ 1 if key.is_active else 0 }})" title="Edit">✎</button>
+            <form method="post" action="{{ url_for('llm_keys_delete', key_id=key.id) }}" onsubmit="return confirm('Delete this key?')">
+              <button class="btn-icon danger" title="Delete">✕</button>
+            </form>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty-state">No LLM keys configured yet.<br>Add one using the form on the right.</div>
+      {% endif %}
+    </div>
+
+    <!-- Usage / Cost stats -->
+    <div class="card">
+      <div class="card-title">Token Usage & Cost</div>
+      {% if stats %}
+      <table class="usage-table">
+        <thead>
+          <tr>
+            <th>Key Name</th>
+            <th>Model</th>
+            <th>Input Tokens</th>
+            <th>Output Tokens</th>
+            <th>Requests</th>
+            <th>Est. Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in stats %}
+          <tr>
+            <td>{{ row.name or '(env key)' }}</td>
+            <td><span style="font-family:monospace;font-size:.8rem;">{{ row.model }}</span></td>
+            <td>{{ "{:,}".format(row.total_input|int) }}</td>
+            <td>{{ "{:,}".format(row.total_output|int) }}</td>
+            <td>{{ row.requests }}</td>
+            <td class="cost-val">${{ "%.4f"|format(row.total_cost|float) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <div class="empty-state">No usage data yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right: Add key form -->
+  <div class="card">
+    <div class="card-title">Add New Key</div>
+    <form method="post" action="{{ url_for('llm_keys_add') }}">
+      <div class="field-group">
+        <label>Key Name</label>
+        <input type="text" name="name" placeholder="e.g. Primary GPT-4o" required>
+      </div>
+      <div class="field-group">
+        <label>Provider</label>
+        <select name="provider">
+          <option value="openai">OpenAI</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>Model</label>
+        <select name="model">
+          <option value="gpt-4o">gpt-4o</option>
+          <option value="gpt-4o-mini">gpt-4o-mini</option>
+          <option value="gpt-4">gpt-4</option>
+          <option value="gpt-4-turbo">gpt-4-turbo</option>
+          <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>API Key</label>
+        <input type="password" name="api_key" placeholder="sk-..." required autocomplete="new-password">
+        <div class="field-hint">Stored encrypted — never shown in plain text.</div>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Add Key</button>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal-box">
+    <div class="modal-title">Edit LLM Key</div>
+    <form method="post" id="editForm">
+      <div class="field-group">
+        <label>Key Name</label>
+        <input type="text" name="name" id="editName" required>
+      </div>
+      <div class="field-group">
+        <label>Model</label>
+        <select name="model" id="editModel">
+          <option value="gpt-4o">gpt-4o</option>
+          <option value="gpt-4o-mini">gpt-4o-mini</option>
+          <option value="gpt-4">gpt-4</option>
+          <option value="gpt-4-turbo">gpt-4-turbo</option>
+          <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>New API Key <span style="color:var(--muted);font-weight:400;">(leave blank to keep current)</span></label>
+        <input type="password" name="api_key" placeholder="sk-..." autocomplete="new-password">
+      </div>
+      <div class="field-group">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+          <input type="checkbox" name="is_active" value="1" id="editActive" style="width:auto;">
+          Active
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openEditModal(id, name, provider, model, isActive) {
+  document.getElementById('editName').value = name;
+  document.getElementById('editModel').value = model;
+  document.getElementById('editActive').checked = isActive === 1;
+  document.getElementById('editForm').action = '/admin/llm-keys/' + id + '/edit';
+  document.getElementById('editModal').classList.add('open');
+}
+function closeEditModal() {
+  document.getElementById('editModal').classList.remove('open');
+}
+document.getElementById('editModal').addEventListener('click', function(e) {
+  if (e.target === this) closeEditModal();
+});
+</script>
+{% endblock %}
