@@ -371,6 +371,7 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
   line-height: 1.65;
   max-width: 100%;
   word-break: break-word;
+  white-space: normal;
 }
 .msg-user { background: var(--navy); color: var(--white); max-width: 72%; border-radius: 12px 12px 3px 12px; }
 .msg-ai   { background: var(--white); border: 1px solid var(--border); color: var(--text); border-radius: 3px 12px 12px 12px; }
