@@ -152,6 +152,7 @@ def dashboard():
     recent_questions = db.get_recent_questions(10)
     recent_conversations = db.list_conversations(limit=8)
     doc_stats = db.get_document_citation_stats()
+    llm_usage_stats = db.get_llm_usage_stats() if _current_user().get("role") == "admin" else []
     return render_template(
         "dashboard.html",
         user=_current_user(),
@@ -160,6 +161,7 @@ def dashboard():
         recent_questions=recent_questions,
         recent_conversations=recent_conversations,
         doc_stats=doc_stats,
+        llm_usage_stats=llm_usage_stats,
         fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
     )
 
@@ -1134,7 +1136,8 @@ def llm_keys_add():
         return redirect(url_for("llm_keys"))
     hint = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
     enc = encrypt_key(api_key)
-    db.add_llm_key(name, provider, model, enc, hint)
+    base_url = request.form.get("base_url", "").strip()
+    db.add_llm_key(name, provider, model, enc, hint, base_url=base_url)
     flash("LLM key added.", "success")
     return redirect(url_for("llm_keys"))
 
@@ -1158,6 +1161,8 @@ def llm_keys_edit(key_id):
     if api_key:
         updates["api_key_enc"] = encrypt_key(api_key)
         updates["api_key_hint"] = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
+    base_url = request.form.get("base_url", "").strip()
+    updates["base_url"] = base_url
     db.update_llm_key(key_id, **updates)
     flash("LLM key updated.", "success")
     return redirect(url_for("llm_keys"))

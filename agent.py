@@ -26,24 +26,60 @@ FUND_NAME = os.getenv("FUND_NAME", "the Fund")
 MODEL = "gpt-4o"
 
 
-def _get_openai_clients() -> list:
-    """Returns [(key_id, model, client), ...] sorted by priority. Falls back to env var."""
-    keys = [k for k in get_active_llm_keys() if k["provider"] == "openai"]
-    if keys:
-        result = []
-        for k in keys:
-            try:
-                client = OpenAI(api_key=decrypt_key(k["api_key_enc"]))
-                result.append((k["id"], k["model"], client))
-            except Exception:
-                continue
-        if result:
-            return result
+_OPENAI_COMPAT_PROVIDERS = {"openai", "groq", "mistral", "ollama", "openrouter", "custom"}
+
+_PROVIDER_BASE_URLS = {
+    "groq":       "https://api.groq.com/openai/v1",
+    "mistral":    "https://api.mistral.ai/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "ollama":     "http://localhost:11434/v1",
+}
+
+
+def _get_clients() -> list:
+    """Returns [(key_id, model, provider, client_or_anthropic), ...] sorted by priority. Falls back to env var."""
+    keys = get_active_llm_keys()
+    result = []
+    for k in keys:
+        try:
+            provider = k.get("provider", "openai").lower()
+            model = k["model"]
+            raw_key = decrypt_key(k["api_key_enc"])
+            key_id = k["id"]
+            base_url = k.get("base_url") or _PROVIDER_BASE_URLS.get(provider, "")
+
+            if provider == "anthropic":
+                try:
+                    import anthropic as _anthropic
+                    client = _anthropic.Anthropic(api_key=raw_key)
+                    result.append((key_id, model, "anthropic", client))
+                except ImportError:
+                    pass
+            elif provider in _OPENAI_COMPAT_PROVIDERS:
+                kwargs = {"api_key": raw_key}
+                if base_url:
+                    kwargs["base_url"] = base_url
+                elif provider == "ollama":
+                    kwargs["base_url"] = "http://localhost:11434/v1"
+                client = OpenAI(**kwargs)
+                result.append((key_id, model, provider, client))
+        except Exception:
+            continue
+
+    if result:
+        return result
     # Fallback to env var
     env_key = os.getenv("OPENAI_API_KEY")
     if env_key:
-        return [(None, MODEL, OpenAI(api_key=env_key))]
+        return [(None, MODEL, "openai", OpenAI(api_key=env_key))]
     return []
+
+
+# Keep old name as alias used elsewhere
+def _get_openai_clients() -> list:
+    """Legacy alias — returns only OpenAI-compatible entries as (key_id, model, client)."""
+    return [(kid, mdl, cli) for kid, mdl, prov, cli in _get_clients()
+            if prov != "anthropic"]
 
 SYSTEM_PROMPT = f"""You are an expert DDQ (Due Diligence Questionnaire) assistant for {FUND_NAME}.
 
@@ -248,6 +284,54 @@ def _check_knowledge_base(question: str) -> dict | None:
     }
 
 
+def _answer_anthropic(client, model: str, key_id, messages: list,
+                      investor_session_id: int, is_investor: bool) -> dict | None:
+    """Run tool-use loop with Anthropic client. Returns parsed result dict or None on failure."""
+    try:
+        system_msg = next((m["content"] for m in messages if m["role"] == "system"), SYSTEM_PROMPT)
+        msgs = [m for m in messages if m["role"] != "system"]
+
+        anthropic_tools = []
+        for t in TOOLS:
+            fn = t["function"]
+            anthropic_tools.append({
+                "name": fn["name"],
+                "description": fn["description"],
+                "input_schema": fn["parameters"],
+            })
+
+        for _ in range(6):
+            resp = client.messages.create(
+                model=model,
+                max_tokens=2048,
+                system=system_msg,
+                messages=msgs,
+                tools=anthropic_tools,
+                tool_choice={"type": "auto"},
+            )
+            if resp.stop_reason == "tool_use":
+                msgs.append({"role": "assistant", "content": resp.content})
+                tool_results = []
+                for blk in resp.content:
+                    if blk.type == "tool_use":
+                        result = _execute_tool(blk.name, blk.input, investor_session_id, is_investor)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": blk.id,
+                            "content": result,
+                        })
+                msgs.append({"role": "user", "content": tool_results})
+            else:
+                text = "".join(blk.text for blk in resp.content if hasattr(blk, "text"))
+                if key_id:
+                    log_llm_usage(key_id, "anthropic", model,
+                                  resp.usage.input_tokens, resp.usage.output_tokens)
+                return _parse_response(text)
+    except Exception:
+        pass
+    return None
+
+
 def answer_question(
     question: str,
     conversation_history: list,
@@ -260,24 +344,32 @@ def answer_question(
     if kb_result:
         return kb_result
 
-    clients = _get_openai_clients()
+    clients = _get_clients()
     if not clients:
         return _fallback()
 
-    for key_id, model, client in clients:
-        try:
-            messages = _build_messages(question, conversation_history)
-            if investor_name:
-                messages[0]["content"] += f"\n\nCURRENT INVESTOR: {investor_name}"
-                if investor_session_id:
-                    messages[0]["content"] += f" (investor_session_id: {investor_session_id})"
-                    messages[0]["content"] += "\nInvestor-specific documents are available — search them."
+    messages = _build_messages(question, conversation_history)
+    if investor_name:
+        messages[0]["content"] += f"\n\nCURRENT INVESTOR: {investor_name}"
+        if investor_session_id:
+            messages[0]["content"] += f" (investor_session_id: {investor_session_id})"
+            messages[0]["content"] += "\nInvestor-specific documents are available — search them."
 
+    for key_id, model, provider, client in clients:
+        try:
+            if provider == "anthropic":
+                result = _answer_anthropic(client, model, key_id, messages,
+                                           investor_session_id, is_investor)
+                if result:
+                    return result
+                continue
+
+            msgs = [m.copy() for m in messages]
             first_call = True
             for _ in range(6):
                 response = client.chat.completions.create(
                     model=model,
-                    messages=messages,
+                    messages=msgs,
                     tools=TOOLS,
                     tool_choice={"type": "function", "function": {"name": "search_fund_documents"}} if first_call else "auto",
                     response_format={"type": "json_object"},
@@ -286,14 +378,14 @@ def answer_question(
                 msg = response.choices[0].message
 
                 if msg.tool_calls:
-                    messages.append(msg)
+                    msgs.append(msg)
                     for tc in msg.tool_calls:
                         args = json.loads(tc.function.arguments)
-                        result = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                        res = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
+                        msgs.append({"role": "tool", "tool_call_id": tc.id, "content": res})
                 else:
                     if key_id and response.usage:
-                        log_llm_usage(key_id, "openai", model,
+                        log_llm_usage(key_id, provider, model,
                                       response.usage.prompt_tokens,
                                       response.usage.completion_tokens)
                     return _parse_response(msg.content or "")
@@ -320,7 +412,7 @@ def stream_answer(
         yield f"data: {json.dumps({'type': 'result', 'data': kb_result})}\n\n"
         return
 
-    clients = _get_openai_clients()
+    clients = _get_clients()
     if not clients:
         yield f"data: {json.dumps({'type': 'error', 'message': 'No LLM keys configured.'})}\n\n"
         return
@@ -332,9 +424,23 @@ def stream_answer(
             messages[0]["content"] += f" (investor_session_id: {investor_session_id})"
             messages[0]["content"] += "\nInvestor-specific documents are available — search them."
 
-    for key_id, model, client in clients:
+    for key_id, model, provider, client in clients:
         try:
-            msgs = [m.copy() for m in messages]  # fresh copy per key attempt
+            if provider == "anthropic":
+                result = _answer_anthropic(client, model, key_id, messages,
+                                           investor_session_id, is_investor)
+                if result:
+                    answer = result.get("answer", "")
+                    if answer:
+                        words = answer.split(" ")
+                        for i, word in enumerate(words):
+                            token = word + (" " if i < len(words) - 1 else "")
+                            yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+                    yield f"data: {json.dumps({'type': 'result', 'data': result})}\n\n"
+                    return
+                continue
+
+            msgs = [m.copy() for m in messages]
             first_call = True
             for _ in range(6):
                 response = client.chat.completions.create(
@@ -352,26 +458,20 @@ def stream_answer(
                     for tc in msg.tool_calls:
                         yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc.function.name})}\n\n"
                         args = json.loads(tc.function.arguments)
-                        result = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
-                        msgs.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": result,
-                        })
+                        res = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
+                        msgs.append({"role": "tool", "tool_call_id": tc.id, "content": res})
                 else:
                     if key_id and response.usage:
-                        log_llm_usage(key_id, "openai", model,
+                        log_llm_usage(key_id, provider, model,
                                       response.usage.prompt_tokens,
                                       response.usage.completion_tokens)
                     parsed = _parse_response(msg.content or "")
                     answer = parsed.get("answer", "")
-                    # Stream answer word-by-word for typing effect
                     if answer:
                         words = answer.split(" ")
                         for i, word in enumerate(words):
                             token = word + (" " if i < len(words) - 1 else "")
                             yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
-                    # Send full result (sources, themes, meta) after tokens
                     yield f"data: {json.dumps({'type': 'result', 'data': parsed})}\n\n"
                     return
         except Exception:

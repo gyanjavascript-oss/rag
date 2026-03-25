@@ -130,4 +130,46 @@
   </div>
 </div>
 {% endif %}
+
+<!-- LLM Token Usage & Cost (admin only) -->
+{% if llm_usage_stats %}
+<div class="card mt-4">
+  <div class="card-header">
+    <h2 class="card-title">LLM Token Usage & Cost</h2>
+    <a href="{{ url_for('llm_keys') }}" class="card-link">Manage keys →</a>
+  </div>
+  <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+    <thead>
+      <tr style="border-bottom:2px solid var(--border);">
+        <th style="text-align:left;padding:.5rem .75rem;font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Key Name</th>
+        <th style="text-align:left;padding:.5rem .75rem;font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Model</th>
+        <th style="text-align:right;padding:.5rem .75rem;font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Input Tokens</th>
+        <th style="text-align:right;padding:.5rem .75rem;font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Output Tokens</th>
+        <th style="text-align:right;padding:.5rem .75rem;font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Requests</th>
+        <th style="text-align:right;padding:.5rem .75rem;font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Est. Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% set ns = namespace(total_cost=0) %}
+      {% for row in llm_usage_stats %}
+      {% set ns.total_cost = ns.total_cost + (row.total_cost | float) %}
+      <tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:.65rem .75rem;">{{ row.name or '(env key)' }}</td>
+        <td style="padding:.65rem .75rem;font-family:monospace;font-size:.8rem;">{{ row.model }}</td>
+        <td style="padding:.65rem .75rem;text-align:right;">{{ "{:,}".format(row.total_input|int) }}</td>
+        <td style="padding:.65rem .75rem;text-align:right;">{{ "{:,}".format(row.total_output|int) }}</td>
+        <td style="padding:.65rem .75rem;text-align:right;">{{ row.requests }}</td>
+        <td style="padding:.65rem .75rem;text-align:right;font-weight:600;color:var(--navy);">${{ "%.4f"|format(row.total_cost|float) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr style="border-top:2px solid var(--border);background:var(--bg);">
+        <td colspan="5" style="padding:.65rem .75rem;font-weight:600;">Total</td>
+        <td style="padding:.65rem .75rem;text-align:right;font-weight:700;color:var(--navy);">${{ "%.4f"|format(ns.total_cost) }}</td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+{% endif %}
 {% endblock %}

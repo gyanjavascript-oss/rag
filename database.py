@@ -240,6 +240,7 @@ def init_db():
         "ALTER TABLE users ADD COLUMN investor_session_id INTEGER REFERENCES investor_sessions(id)",
         "ALTER TABLE conversations ADD COLUMN status TEXT DEFAULT 'active'",
         "ALTER TABLE llm_keys ADD COLUMN api_key_hint TEXT DEFAULT ''",
+        "ALTER TABLE llm_keys ADD COLUMN base_url TEXT DEFAULT ''",
     ]:
         try:
             c.execute(migration)
@@ -1108,15 +1109,39 @@ def get_recent_questions(limit: int = 20) -> list[dict]:
 # ── LLM Key Management ────────────────────────────────────────────────────────
 
 COST_RATES = {
-    "gpt-4o":                    {"input": 5.00,  "output": 15.00},
-    "gpt-4o-mini":               {"input": 0.15,  "output": 0.60},
-    "gpt-4":                     {"input": 30.00, "output": 60.00},
-    "gpt-4-turbo":               {"input": 10.00, "output": 30.00},
-    "gpt-3.5-turbo":             {"input": 0.50,  "output": 1.50},
-    "claude-3-5-sonnet-20241022":{"input": 3.00,  "output": 15.00},
-    "claude-3-5-haiku-20241022": {"input": 0.80,  "output": 4.00},
-    "claude-3-haiku-20240307":   {"input": 0.25,  "output": 1.25},
-    "claude-3-opus-20240229":    {"input": 15.00, "output": 75.00},
+    # OpenAI
+    "gpt-4o":                       {"input": 5.00,   "output": 15.00},
+    "gpt-4o-mini":                  {"input": 0.15,   "output": 0.60},
+    "gpt-4":                        {"input": 30.00,  "output": 60.00},
+    "gpt-4-turbo":                  {"input": 10.00,  "output": 30.00},
+    "gpt-3.5-turbo":                {"input": 0.50,   "output": 1.50},
+    # Anthropic
+    "claude-opus-4-6":              {"input": 15.00,  "output": 75.00},
+    "claude-sonnet-4-6":            {"input": 3.00,   "output": 15.00},
+    "claude-haiku-4-5-20251001":    {"input": 0.80,   "output": 4.00},
+    "claude-3-5-sonnet-20241022":   {"input": 3.00,   "output": 15.00},
+    "claude-3-5-haiku-20241022":    {"input": 0.80,   "output": 4.00},
+    "claude-3-haiku-20240307":      {"input": 0.25,   "output": 1.25},
+    "claude-3-opus-20240229":       {"input": 15.00,  "output": 75.00},
+    # Google Gemini
+    "gemini-2.0-flash":             {"input": 0.10,   "output": 0.40},
+    "gemini-1.5-pro":               {"input": 1.25,   "output": 5.00},
+    "gemini-1.5-flash":             {"input": 0.075,  "output": 0.30},
+    # Groq (free tier / hosted)
+    "llama-3.3-70b-versatile":      {"input": 0.59,   "output": 0.79},
+    "llama-3.1-8b-instant":         {"input": 0.05,   "output": 0.08},
+    "mixtral-8x7b-32768":           {"input": 0.27,   "output": 0.27},
+    # Mistral
+    "mistral-large-latest":         {"input": 2.00,   "output": 6.00},
+    "mistral-small-latest":         {"input": 0.20,   "output": 0.60},
+    "open-mistral-nemo":            {"input": 0.15,   "output": 0.15},
+    # Ollama — local, no cost
+    "llama3.2":                     {"input": 0.0,    "output": 0.0},
+    "llama3.1":                     {"input": 0.0,    "output": 0.0},
+    "mistral":                      {"input": 0.0,    "output": 0.0},
+    "gemma2":                       {"input": 0.0,    "output": 0.0},
+    "phi4":                         {"input": 0.0,    "output": 0.0},
+    "qwen2.5":                      {"input": 0.0,    "output": 0.0},
 }
 
 
@@ -1143,15 +1168,16 @@ def get_llm_key(key_id: int) -> dict:
     return dict(row) if row else None
 
 
-def add_llm_key(name: str, provider: str, model: str, api_key_enc: str, hint: str, priority: int = None) -> int:
+def add_llm_key(name: str, provider: str, model: str, api_key_enc: str, hint: str,
+                priority: int = None, base_url: str = "") -> int:
     conn = get_db()
     c = conn.cursor()
     if priority is None:
         row = conn.execute("SELECT MAX(priority) FROM llm_keys").fetchone()
         priority = (row[0] or 0) + 1
     c.execute(
-        "INSERT INTO llm_keys (name, provider, model, api_key_enc, api_key_hint, priority) VALUES (?,?,?,?,?,?)",
-        (name, provider, model, api_key_enc, hint, priority)
+        "INSERT INTO llm_keys (name, provider, model, api_key_enc, api_key_hint, priority, base_url) VALUES (?,?,?,?,?,?,?)",
+        (name, provider, model, api_key_enc, hint, priority, base_url or "")
     )
     conn.commit()
     rid = c.lastrowid
@@ -1162,7 +1188,7 @@ def add_llm_key(name: str, provider: str, model: str, api_key_enc: str, hint: st
 def update_llm_key(key_id: int, **kwargs):
     if not kwargs:
         return
-    allowed = {"name", "model", "priority", "is_active", "api_key_enc", "api_key_hint"}
+    allowed = {"name", "model", "priority", "is_active", "api_key_enc", "api_key_hint", "base_url"}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
