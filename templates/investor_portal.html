@@ -11,7 +11,7 @@
     .portal-layout { display: grid; grid-template-columns: 280px 1fr 300px; height: 100vh; overflow: hidden; }
 
     /* Sidebar */
-    .portal-sidebar { background: #0f1f3d; color: #fff; display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,.1); }
+    .portal-sidebar { background: #0f1f3d; color: #fff; display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,.1); height: 100%; overflow: hidden; }
     .portal-sidebar-header { padding: 1.5rem 1.25rem 1rem; border-bottom: 1px solid rgba(255,255,255,.1); }
     .portal-logo { display: flex; align-items: center; gap: .6rem; margin-bottom: .5rem; }
     .portal-logo-icon { font-size: 1.4rem; color: #c9a84c; }
@@ -20,8 +20,8 @@
     .portal-investor-info { font-size: .82rem; color: rgba(255,255,255,.6); margin-top: .4rem; }
     .portal-sidebar-section { padding: .75rem 1.25rem .25rem; font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.3); }
     .portal-middle { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
-    .portal-conv-list { flex: 1; overflow-y: auto; min-height: 80px; }
-    .portal-doc-section { flex-shrink: 0; max-height: 220px; display: flex; flex-direction: column; border-top: 1px solid rgba(255,255,255,.08); }
+    .portal-conv-list { flex: 1; overflow-y: auto; min-height: 0; }
+    .portal-doc-section { flex-shrink: 0; max-height: 40%; min-height: 0; overflow: hidden; display: flex; flex-direction: column; border-top: 1px solid rgba(255,255,255,.08); }
     .portal-conv-item { display: flex; align-items: center; gap: .5rem; padding: .6rem 1.25rem; font-size: .84rem; color: rgba(255,255,255,.65); text-decoration: none; border-left: 3px solid transparent; transition: background .15s; }
     .portal-conv-item:hover { background: rgba(255,255,255,.07); color: #fff; text-decoration: none; }
     .portal-conv-item.active { background: rgba(201,168,76,.15); border-left-color: #c9a84c; color: #fff; }
