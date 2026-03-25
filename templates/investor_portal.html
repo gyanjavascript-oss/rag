@@ -22,11 +22,18 @@
     .portal-middle { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
     .portal-conv-list { flex: 1; overflow-y: scroll; min-height: 0; }
     .portal-doc-section { flex-shrink: 0; max-height: 40%; min-height: 0; overflow: hidden; display: flex; flex-direction: column; border-top: 1px solid rgba(255,255,255,.08); }
-    .portal-conv-item { display: flex; align-items: center; gap: .5rem; padding: .6rem 1.25rem; font-size: .84rem; color: rgba(255,255,255,.65); text-decoration: none; border-left: 3px solid transparent; transition: background .15s; }
-    .portal-conv-item:hover { background: rgba(255,255,255,.07); color: #fff; text-decoration: none; }
+    .portal-conv-item { display: flex; align-items: center; gap: .4rem; padding: .5rem .75rem .5rem 1.25rem; font-size: .84rem; color: rgba(255,255,255,.65); border-left: 3px solid transparent; transition: background .15s; }
+    .portal-conv-item:hover { background: rgba(255,255,255,.07); color: #fff; }
     .portal-conv-item.active { background: rgba(201,168,76,.15); border-left-color: #c9a84c; color: #fff; }
-    .portal-conv-title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .portal-conv-link { flex: 1; display: flex; flex-direction: column; min-width: 0; text-decoration: none; color: inherit; }
+    .portal-conv-link:hover { text-decoration: none; color: inherit; }
+    .portal-conv-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .portal-conv-date { font-size: .7rem; color: rgba(255,255,255,.3); }
+    .portal-conv-actions { display: none; align-items: center; gap: .2rem; flex-shrink: 0; }
+    .portal-conv-row:hover .portal-conv-actions { display: flex; }
+    .portal-conv-btn { background: none; border: none; cursor: pointer; color: rgba(255,255,255,.4); font-size: .8rem; padding: .15rem .3rem; border-radius: 3px; line-height: 1; }
+    .portal-conv-btn:hover { color: #fff; background: rgba(255,255,255,.1); }
+    .portal-conv-del:hover { color: #fca5a5 !important; }
     .portal-new-btn { margin: .6rem 1.25rem; display: flex; align-items: center; justify-content: center; padding: .5rem; border-radius: 6px; background: rgba(201,168,76,.2); border: 1px solid rgba(201,168,76,.4); color: #c9a84c; font-size: .875rem; font-weight: 600; cursor: pointer; text-decoration: none; }
     .portal-new-btn:hover { background: rgba(201,168,76,.3); text-decoration: none; }
     .portal-doc-list { overflow-y: scroll; padding: 0 1.25rem .5rem; flex: 1; min-height: 0; }
@@ -161,11 +168,18 @@
       <div class="portal-conv-list">
         {% if conversations %}
           {% for c in conversations %}
-          <a href="{{ url_for('investor_chat_view', conv_id=c.id) }}"
-             class="portal-conv-item {% if active_conv and active_conv.id == c.id %}active{% endif %}">
-            <span class="portal-conv-title">{{ c.title or 'Thread' }}</span>
-            <span class="portal-conv-date">{{ c.updated_at[:10] if c.updated_at else '' }}</span>
-          </a>
+          <div class="portal-conv-item {% if active_conv and active_conv.id == c.id %}active{% endif %} portal-conv-row" data-id="{{ c.id }}">
+            <a href="{{ url_for('investor_chat_view', conv_id=c.id) }}" class="portal-conv-link">
+              <span class="portal-conv-title">{{ c.title or 'Thread' }}</span>
+              <span class="portal-conv-date">{{ c.updated_at[:10] if c.updated_at else '' }}</span>
+            </a>
+            <div class="portal-conv-actions">
+              <button class="portal-conv-btn" title="Rename" onclick="openRenameModal({{ c.id }}, '{{ c.title | e }}')">✎</button>
+              <form method="POST" action="{{ url_for('investor_delete_chat', conv_id=c.id) }}" style="display:inline;" onsubmit="return confirm('Delete this thread?')">
+                <button type="submit" class="portal-conv-btn portal-conv-del" title="Delete">✕</button>
+              </form>
+            </div>
+          </div>
           {% endfor %}
         {% else %}
           <div style="padding:.75rem 1.25rem;font-size:.8rem;color:rgba(255,255,255,.3);">No threads yet</div>
@@ -700,5 +714,34 @@ function pollMessages() {
 }
 </script>
 {% endif %}
+
+<!-- Rename Modal -->
+<div id="renameModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:10px;padding:1.5rem;width:420px;max-width:95vw;box-shadow:0 8px 40px rgba(0,0,0,.2);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <strong style="font-size:1rem;color:#0f1f3d;">Rename Thread</strong>
+      <button onclick="document.getElementById('renameModal').style.display='none'" style="background:none;border:none;font-size:1.1rem;cursor:pointer;color:#6b7a99;">✕</button>
+    </div>
+    <form id="renameForm" method="POST">
+      <input type="text" name="title" id="renameInput"
+        style="width:100%;padding:.6rem .85rem;border:1px solid #dde1ed;border-radius:6px;font-size:.9rem;margin-bottom:1rem;box-sizing:border-box;"
+        required maxlength="120">
+      <div style="display:flex;justify-content:flex-end;gap:.6rem;">
+        <button type="button" onclick="document.getElementById('renameModal').style.display='none'"
+          style="padding:.5rem 1rem;border:1px solid #dde1ed;border-radius:6px;background:none;cursor:pointer;font-size:.875rem;">Cancel</button>
+        <button type="submit"
+          style="padding:.5rem 1.1rem;background:#0f1f3d;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:.875rem;">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+function openRenameModal(convId, currentTitle) {
+  document.getElementById('renameForm').action = `/investor/chat/${convId}/rename`;
+  document.getElementById('renameInput').value = currentTitle;
+  document.getElementById('renameModal').style.display = 'flex';
+  setTimeout(() => document.getElementById('renameInput').select(), 50);
+}
+</script>
 </body>
 </html>

@@ -810,12 +810,32 @@ def list_investor_conversations(investor_session_id: int) -> list:
                COUNT(m.id) as message_count
         FROM conversations c
         LEFT JOIN messages m ON m.conversation_id = c.id
-        WHERE c.investor_session_id = ?
+        WHERE c.investor_session_id = ? AND (c.status IS NULL OR c.status != 'deleted')
         GROUP BY c.id
         ORDER BY c.updated_at DESC
     """, (investor_session_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def soft_delete_investor_conversation(conv_id: int, investor_session_id: int):
+    conn = get_db()
+    conn.execute(
+        "UPDATE conversations SET status='deleted' WHERE id=? AND investor_session_id=?",
+        (conv_id, investor_session_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def rename_investor_conversation(conv_id: int, investor_session_id: int, title: str):
+    conn = get_db()
+    conn.execute(
+        "UPDATE conversations SET title=? WHERE id=? AND investor_session_id=?",
+        (title.strip(), conv_id, investor_session_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 # ── Human Agent Handover ──────────────────────────────────────────────────────

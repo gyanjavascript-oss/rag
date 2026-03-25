@@ -769,13 +769,10 @@ def investor_portal():
 @investor_login_required
 def investor_new_chat():
     inv = _current_investor()
-    investor_session = db.get_investor_session(inv["session_id"])
-    title = f"DDQ – {investor_session['investor_name']}" if investor_session else "My Questions"
-    # Use admin user id as created_by (or store investor user id)
     conv_id = db.create_conversation(
         created_by=inv["id"],
         investor_session_id=inv["session_id"],
-        title=title,
+        title=None,
     )
     return redirect(url_for("investor_chat_view", conv_id=conv_id))
 
@@ -805,6 +802,24 @@ def investor_chat_view(conv_id):
     )
 
 
+@app.route("/investor/chat/<int:conv_id>/delete", methods=["POST"])
+@investor_login_required
+def investor_delete_chat(conv_id):
+    inv = _current_investor()
+    db.soft_delete_investor_conversation(conv_id, inv["session_id"])
+    return redirect(url_for("investor_portal"))
+
+
+@app.route("/investor/chat/<int:conv_id>/rename", methods=["POST"])
+@investor_login_required
+def investor_rename_chat(conv_id):
+    inv = _current_investor()
+    title = request.form.get("title", "").strip()
+    if title:
+        db.rename_investor_conversation(conv_id, inv["session_id"], title)
+    return redirect(url_for("investor_chat_view", conv_id=conv_id))
+
+
 @app.route("/investor/chat/<int:conv_id>/stream")
 @investor_login_required
 def investor_chat_stream(conv_id):
@@ -826,7 +841,7 @@ def investor_chat_stream(conv_id):
     db.add_message(conv_id, "user", question)
 
     history = db.get_messages(conv_id)
-    if len([m for m in history if m["role"] == "user"]) == 1 and not conv["title"]:
+    if len([m for m in history if m["role"] == "user"]) == 1:
         db.update_conversation_title(conv_id, question[:80])
 
     agent_history = [
