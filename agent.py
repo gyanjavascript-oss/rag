@@ -481,6 +481,9 @@ def stream_answer(
     yield f"data: {json.dumps({'type': 'error', 'message': 'Max iterations reached'})}\n\n"
 
 
+_json_decoder = json.JSONDecoder()
+
+
 def _parse_response(text: str) -> dict:
     if not text:
         return _fallback()
@@ -491,9 +494,10 @@ def _parse_response(text: str) -> dict:
         text = text.lstrip("json").strip().rstrip("`").strip()
     try:
         start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(text[start:end])
+        if start >= 0:
+            # raw_decode only parses the FIRST complete JSON object,
+            # ignoring any extra data after it (e.g. concatenated responses)
+            data, _ = _json_decoder.raw_decode(text, start)
             return {
                 "answer": data.get("answer", ""),
                 "sources": data.get("sources", []),
