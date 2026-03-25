@@ -518,6 +518,70 @@ def _parse_response(text: str) -> dict:
     }
 
 
+def generate_investor_profile(investor_name: str, entity: str, notes: str, questions: list) -> dict:
+    """
+    Generate a structured investor profile from their description and question history.
+    Returns a dict with keys: investor_type, focus_areas, key_concerns, due_diligence_priorities,
+    communication_style, summary.
+    """
+    clients = _get_clients()
+    if not clients:
+        return None
+
+    q_text = "\n".join(f"- {q['content']}" for q in questions[:40]) if questions else "No questions asked yet."
+
+    prompt = f"""You are an investor relations analyst. Based on the information below, generate a concise investor profile.
+
+INVESTOR NAME: {investor_name}
+ENTITY: {entity or 'Not specified'}
+NOTES / DESCRIPTION: {notes or 'None provided'}
+
+QUESTIONS ASKED BY THIS INVESTOR:
+{q_text}
+
+Return ONLY valid JSON with this exact structure:
+{{
+  "investor_type": "e.g. Institutional, Family Office, HNW Individual, Pension Fund, Endowment, etc.",
+  "focus_areas": ["area1", "area2", "area3"],
+  "key_concerns": ["concern1", "concern2", "concern3"],
+  "due_diligence_priorities": ["priority1", "priority2", "priority3"],
+  "communication_style": "Brief description of how they communicate (e.g. detail-oriented, high-level, technical)",
+  "risk_profile": "Conservative / Moderate / Aggressive — with brief reasoning",
+  "summary": "2-3 sentence professional summary of this investor's profile and what they care about most."
+}}"""
+
+    for key_id, model, provider, client in clients:
+        try:
+            if provider == "anthropic":
+                import anthropic as _anthropic
+                resp = client.messages.create(
+                    model=model, max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                text = "".join(b.text for b in resp.content if hasattr(b, "text"))
+                if key_id:
+                    log_llm_usage(key_id, "anthropic", model,
+                                  resp.usage.input_tokens, resp.usage.output_tokens)
+            else:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                )
+                text = resp.choices[0].message.content or ""
+                if key_id and resp.usage:
+                    log_llm_usage(key_id, provider, model,
+                                  resp.usage.prompt_tokens, resp.usage.completion_tokens)
+
+            start = text.find("{")
+            if start >= 0:
+                data, _ = _json_decoder.raw_decode(text, start)
+                return data
+        except Exception:
+            continue
+    return None
+
+
 def _fallback() -> dict:
     return {
         "answer": "I was unable to generate a response. Please try again.",

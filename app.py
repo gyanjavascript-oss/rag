@@ -16,7 +16,7 @@ load_dotenv()
 
 import database as db
 import document_processor as dp
-from agent import stream_answer
+from agent import stream_answer, generate_investor_profile
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret-change-me")
@@ -433,6 +433,14 @@ def investor_detail(session_id):
     assigned_doc_ids = db.get_assigned_document_ids(session_id)
     investor_user = db.get_investor_user(session_id)
 
+    profile = None
+    raw_profile = inv_session.get("profile_text")
+    if raw_profile:
+        try:
+            profile = json.loads(raw_profile)
+        except Exception:
+            pass
+
     return render_template(
         "investor_detail.html",
         user=_current_user(),
@@ -442,6 +450,7 @@ def investor_detail(session_id):
         all_fund_docs=all_fund_docs,
         assigned_doc_ids=assigned_doc_ids,
         investor_user=investor_user,
+        profile=profile,
         fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
     )
 
@@ -647,6 +656,26 @@ def api_ingest_folder():
         return jsonify({"error": "Admin only"}), 403
     results = dp.ingest_from_folder(FUND_DOCS_FOLDER, _current_user()["id"])
     return jsonify({"results": results})
+
+
+@app.route("/investors/<int:session_id>/generate-profile", methods=["POST"])
+@login_required
+def investor_generate_profile(session_id):
+    inv = db.get_investor_session(session_id)
+    if not inv:
+        return jsonify({"error": "Not found"}), 404
+    questions = db.get_investor_questions(session_id)
+    profile = generate_investor_profile(
+        investor_name=inv["investor_name"],
+        entity=inv.get("investor_entity", ""),
+        notes=inv.get("notes", ""),
+        questions=questions,
+    )
+    if profile:
+        import json as _json
+        db.save_investor_profile(session_id, _json.dumps(profile))
+        return jsonify({"ok": True, "profile": profile})
+    return jsonify({"error": "Could not generate profile"}), 500
 
 
 # ── Admin: Investor Portal Management ─────────────────────────────────────────

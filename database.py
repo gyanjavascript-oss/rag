@@ -241,6 +241,8 @@ def init_db():
         "ALTER TABLE conversations ADD COLUMN status TEXT DEFAULT 'active'",
         "ALTER TABLE llm_keys ADD COLUMN api_key_hint TEXT DEFAULT ''",
         "ALTER TABLE llm_keys ADD COLUMN base_url TEXT DEFAULT ''",
+        "ALTER TABLE investor_sessions ADD COLUMN profile_text TEXT DEFAULT ''",
+        "ALTER TABLE investor_sessions ADD COLUMN profile_generated_at TEXT DEFAULT ''",
     ]:
         try:
             c.execute(migration)
@@ -500,6 +502,36 @@ def create_investor_session(investor_name: str, investor_entity: str,
     sid = c.lastrowid
     conn.close()
     return sid
+
+
+def get_investor_questions(session_id: int, limit: int = 50) -> list:
+    """Return all user questions asked by this investor across all their conversations."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT m.content, m.themes, m.created_at
+        FROM messages m
+        JOIN conversations c ON m.conversation_id = c.id
+        WHERE c.investor_session_id = ? AND m.role = 'user'
+        ORDER BY m.created_at ASC
+        LIMIT ?
+    """, (session_id, limit)).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["themes"] = json.loads(d["themes"]) if d["themes"] else []
+        result.append(d)
+    return result
+
+
+def save_investor_profile(session_id: int, profile_text: str):
+    conn = get_db()
+    conn.execute(
+        "UPDATE investor_sessions SET profile_text=?, profile_generated_at=datetime('now') WHERE id=?",
+        (profile_text, session_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 # ── Conversations & Messages ──────────────────────────────────────────────────

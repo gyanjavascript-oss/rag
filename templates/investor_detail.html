@@ -26,6 +26,72 @@
   </form>
 </div>
 
+<!-- Investor Profile -->
+<div class="card" style="margin-bottom:1.5rem;" id="profileCard">
+  <div class="card-header">
+    <h2 class="card-title">Investor Profile</h2>
+    <div style="display:flex;align-items:center;gap:.75rem;margin-left:auto;">
+      {% if inv_session.profile_generated_at %}
+      <span style="font-size:.75rem;color:var(--muted);">Generated {{ inv_session.profile_generated_at[:10] }}</span>
+      {% endif %}
+      <button class="btn-outline btn-sm" id="genProfileBtn" onclick="generateProfile()">
+        {{ 'Regenerate Profile' if profile else 'Generate Profile' }}
+      </button>
+    </div>
+  </div>
+
+  <div id="profileContent" style="padding:1.25rem 1.5rem;">
+    {% if profile %}
+    <div class="profile-grid">
+      <div class="profile-item">
+        <div class="profile-label">Investor Type</div>
+        <div class="profile-value">{{ profile.investor_type or '—' }}</div>
+      </div>
+      <div class="profile-item">
+        <div class="profile-label">Risk Profile</div>
+        <div class="profile-value">{{ profile.risk_profile or '—' }}</div>
+      </div>
+      <div class="profile-item">
+        <div class="profile-label">Communication Style</div>
+        <div class="profile-value">{{ profile.communication_style or '—' }}</div>
+      </div>
+      <div class="profile-item profile-full">
+        <div class="profile-label">Summary</div>
+        <div class="profile-value">{{ profile.summary or '—' }}</div>
+      </div>
+      <div class="profile-item">
+        <div class="profile-label">Focus Areas</div>
+        <div class="profile-tags">
+          {% for a in (profile.focus_areas or []) %}
+          <span class="profile-tag tag-focus">{{ a }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="profile-item">
+        <div class="profile-label">Key Concerns</div>
+        <div class="profile-tags">
+          {% for c in (profile.key_concerns or []) %}
+          <span class="profile-tag tag-concern">{{ c }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="profile-item profile-full">
+        <div class="profile-label">Due Diligence Priorities</div>
+        <div class="profile-tags">
+          {% for p in (profile.due_diligence_priorities or []) %}
+          <span class="profile-tag tag-priority">{{ p }}</span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:2rem;color:var(--muted);font-size:.875rem;" id="profileEmpty">
+      No profile generated yet. Click <strong>Generate Profile</strong> to create one from this investor's questions and description.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
 <!-- Investor Portal Access -->
 <div class="card" style="margin-bottom:1.5rem;">
   <div class="card-header">
@@ -202,6 +268,20 @@
 </div>
 
 <style>
+/* Investor Profile */
+.profile-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+.profile-full { grid-column: 1 / -1; }
+.profile-item { background: var(--bg); border-radius: 8px; padding: .85rem 1rem; }
+.profile-label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: .4rem; }
+.profile-value { font-size: .875rem; color: var(--text); line-height: 1.5; }
+.profile-tags { display: flex; flex-wrap: wrap; gap: .4rem; }
+.profile-tag { font-size: .75rem; font-weight: 600; border-radius: 20px; padding: .2rem .7rem; }
+.tag-focus    { background: #dbeafe; color: #1e40af; }
+.tag-concern  { background: #fee2e2; color: #991b1b; }
+.tag-priority { background: #d1fae5; color: #065f46; }
+@media (max-width: 900px) { .profile-grid { grid-template-columns: 1fr 1fr; } }
+
+/* Doc-check-row:hover */
 .doc-check-row:hover { background: var(--bg); }
 .cat-filter-btn {
   padding: .25rem .65rem; border-radius: 20px; border: 1px solid var(--border);
@@ -212,6 +292,68 @@
 .cat-filter-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
 </style>
 <script>
+// Investor Profile Generation
+function generateProfile() {
+  const btn = document.getElementById('genProfileBtn');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+
+  fetch('{{ url_for("investor_generate_profile", session_id=inv_session.id) }}', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok && data.profile) {
+      renderProfile(data.profile);
+      btn.textContent = 'Regenerate Profile';
+    } else {
+      btn.textContent = 'Regenerate Profile';
+      alert('Could not generate profile. Please try again.');
+    }
+    btn.disabled = false;
+  })
+  .catch(() => { btn.disabled = false; btn.textContent = 'Regenerate Profile'; });
+}
+
+function renderProfile(p) {
+  const html = `
+    <div class="profile-grid">
+      <div class="profile-item">
+        <div class="profile-label">Investor Type</div>
+        <div class="profile-value">${esc(p.investor_type||'—')}</div>
+      </div>
+      <div class="profile-item">
+        <div class="profile-label">Risk Profile</div>
+        <div class="profile-value">${esc(p.risk_profile||'—')}</div>
+      </div>
+      <div class="profile-item">
+        <div class="profile-label">Communication Style</div>
+        <div class="profile-value">${esc(p.communication_style||'—')}</div>
+      </div>
+      <div class="profile-item profile-full">
+        <div class="profile-label">Summary</div>
+        <div class="profile-value">${esc(p.summary||'—')}</div>
+      </div>
+      <div class="profile-item">
+        <div class="profile-label">Focus Areas</div>
+        <div class="profile-tags">${tags(p.focus_areas||[], 'tag-focus')}</div>
+      </div>
+      <div class="profile-item">
+        <div class="profile-label">Key Concerns</div>
+        <div class="profile-tags">${tags(p.key_concerns||[], 'tag-concern')}</div>
+      </div>
+      <div class="profile-item profile-full">
+        <div class="profile-label">Due Diligence Priorities</div>
+        <div class="profile-tags">${tags(p.due_diligence_priorities||[], 'tag-priority')}</div>
+      </div>
+    </div>`;
+  document.getElementById('profileContent').innerHTML = html;
+}
+
+function esc(t) { return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function tags(arr, cls) { return arr.map(t => `<span class="profile-tag ${cls}">${esc(t)}</span>`).join(''); }
+
 let _activeCat = 'all';
 
 function filterDocCat(cat) {
