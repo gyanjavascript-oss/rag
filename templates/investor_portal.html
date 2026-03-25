@@ -19,7 +19,9 @@
     .portal-logo-sub { font-size: .75rem; color: rgba(255,255,255,.5); }
     .portal-investor-info { font-size: .82rem; color: rgba(255,255,255,.6); margin-top: .4rem; }
     .portal-sidebar-section { padding: .75rem 1.25rem .25rem; font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.3); }
-    .portal-conv-list { flex: 1; overflow-y: auto; }
+    .portal-middle { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+    .portal-conv-list { flex: 1; overflow-y: auto; min-height: 80px; }
+    .portal-doc-section { flex-shrink: 0; max-height: 220px; display: flex; flex-direction: column; border-top: 1px solid rgba(255,255,255,.08); }
     .portal-conv-item { display: flex; align-items: center; gap: .5rem; padding: .6rem 1.25rem; font-size: .84rem; color: rgba(255,255,255,.65); text-decoration: none; border-left: 3px solid transparent; transition: background .15s; }
     .portal-conv-item:hover { background: rgba(255,255,255,.07); color: #fff; text-decoration: none; }
     .portal-conv-item.active { background: rgba(201,168,76,.15); border-left-color: #c9a84c; color: #fff; }
@@ -27,7 +29,7 @@
     .portal-conv-date { font-size: .7rem; color: rgba(255,255,255,.3); }
     .portal-new-btn { margin: .6rem 1.25rem; display: flex; align-items: center; justify-content: center; padding: .5rem; border-radius: 6px; background: rgba(201,168,76,.2); border: 1px solid rgba(201,168,76,.4); color: #c9a84c; font-size: .875rem; font-weight: 600; cursor: pointer; text-decoration: none; }
     .portal-new-btn:hover { background: rgba(201,168,76,.3); text-decoration: none; }
-    .portal-doc-list { padding: 0 1.25rem .5rem; }
+    .portal-doc-list { overflow-y: auto; padding: 0 1.25rem .5rem; flex: 1; min-height: 0; }
     .portal-doc-item { display: flex; align-items: center; gap: .4rem; padding: .28rem 0; font-size: .78rem; color: rgba(255,255,255,.5); border-bottom: 1px solid rgba(255,255,255,.05); }
     .portal-doc-dot { width: 5px; height: 5px; border-radius: 50%; background: #c9a84c; flex-shrink: 0; }
     .portal-sidebar-footer { padding: 1rem 1.25rem; border-top: 1px solid rgba(255,255,255,.1); display: flex; align-items: center; gap: .6rem; }
@@ -154,34 +156,38 @@
       <button type="submit" class="portal-new-btn" style="width:100%;border:none;">+ New Thread</button>
     </form>
 
-    <div class="portal-sidebar-section">My Threads</div>
-    <div class="portal-conv-list">
-      {% if conversations %}
-        {% for c in conversations %}
-        <a href="{{ url_for('investor_chat_view', conv_id=c.id) }}"
-           class="portal-conv-item {% if active_conv and active_conv.id == c.id %}active{% endif %}">
-          <span class="portal-conv-title">{{ c.title or 'Thread' }}</span>
-          <span class="portal-conv-date">{{ c.updated_at[:10] if c.updated_at else '' }}</span>
-        </a>
-        {% endfor %}
-      {% else %}
-        <div style="padding:.75rem 1.25rem;font-size:.8rem;color:rgba(255,255,255,.3);">No threads yet</div>
+    <div class="portal-middle">
+      <div class="portal-sidebar-section">My Threads</div>
+      <div class="portal-conv-list">
+        {% if conversations %}
+          {% for c in conversations %}
+          <a href="{{ url_for('investor_chat_view', conv_id=c.id) }}"
+             class="portal-conv-item {% if active_conv and active_conv.id == c.id %}active{% endif %}">
+            <span class="portal-conv-title">{{ c.title or 'Thread' }}</span>
+            <span class="portal-conv-date">{{ c.updated_at[:10] if c.updated_at else '' }}</span>
+          </a>
+          {% endfor %}
+        {% else %}
+          <div style="padding:.75rem 1.25rem;font-size:.8rem;color:rgba(255,255,255,.3);">No threads yet</div>
+        {% endif %}
+      </div>
+
+      {% if assigned_docs %}
+      <div class="portal-doc-section">
+        <div class="portal-sidebar-section">Available Documents</div>
+        <div class="portal-doc-list">
+          {% for d in assigned_docs %}
+          <a href="{{ url_for('investor_view_document', doc_id=d.id) }}" target="_blank"
+             class="portal-doc-item" style="text-decoration:none;cursor:pointer;" title="Click to view {{ d.name }}">
+            <span class="portal-doc-dot"></span>
+            <span style="flex:1;">{{ d.name }}</span>
+            <span style="font-size:.65rem;opacity:.5;">↗</span>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
       {% endif %}
     </div>
-
-    {% if assigned_docs %}
-    <div class="portal-sidebar-section">Available Documents</div>
-    <div class="portal-doc-list">
-      {% for d in assigned_docs %}
-      <a href="{{ url_for('investor_view_document', doc_id=d.id) }}" target="_blank"
-         class="portal-doc-item" style="text-decoration:none;cursor:pointer;" title="Click to view {{ d.name }}">
-        <span class="portal-doc-dot"></span>
-        <span style="flex:1;">{{ d.name }}</span>
-        <span style="font-size:.65rem;opacity:.5;">↗</span>
-      </a>
-      {% endfor %}
-    </div>
-    {% endif %}
 
     <div class="portal-sidebar-footer">
       <div class="portal-user-avatar">{{ investor.name[0] if investor.name else 'I' }}</div>
