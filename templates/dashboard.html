@@ -132,12 +132,13 @@
 {% endif %}
 
 <!-- LLM Token Usage & Cost (admin only) -->
-{% if llm_usage_stats %}
+{% if user.role == 'admin' %}
 <div class="card mt-4">
   <div class="card-header">
     <h2 class="card-title">LLM Token Usage & Cost</h2>
     <a href="{{ url_for('llm_keys') }}" class="card-link">Manage keys →</a>
   </div>
+  {% if llm_usage_stats %}
   <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
     <thead>
       <tr style="border-bottom:2px solid var(--border);">
@@ -170,6 +171,11 @@
       </tr>
     </tfoot>
   </table>
+  {% else %}
+  <div style="padding:2rem;text-align:center;color:var(--muted);font-size:.875rem;">
+    No usage data yet. Data appears here once LLM keys are used to answer questions.
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 {% endblock %}
