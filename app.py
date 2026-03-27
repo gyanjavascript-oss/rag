@@ -906,9 +906,8 @@ def investor_new_chat():
         investor_session_id=inv["session_id"],
         title=title,
     )
-    # Return JSON if requested (agent chat), otherwise redirect
-    if request.headers.get("X-Requested-With") == "XMLHttpRequest" or \
-       request.accept_mimetypes.accept_json:
+    # Return JSON only for explicit AJAX requests, otherwise redirect
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return jsonify({"conversation_id": conv_id})
     return redirect(url_for("investor_chat_view", conv_id=conv_id))
 
