@@ -2,59 +2,51 @@
 {% block title %}Agent Marketplace{% endblock %}
 {% block content %}
 <style>
-.mp-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:1.5rem; }
-.mp-title { font-size:1.4rem; font-weight:700; color:#f1f5f9; }
-.mp-subtitle { color:#94a3b8; font-size:.85rem; margin-top:.2rem; }
 .mp-filters { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:1.5rem; }
 .mp-filter-btn {
   padding:.35rem .9rem; border-radius:999px; font-size:.8rem; font-weight:500;
-  border:1px solid #334155; background:#1e293b; color:#94a3b8; cursor:pointer;
-  text-decoration:none; transition:all .15s;
+  border:1px solid var(--border); background:var(--white); color:var(--muted);
+  cursor:pointer; text-decoration:none; transition:all .15s;
 }
-.mp-filter-btn:hover, .mp-filter-btn.active { background:#3b82f6; border-color:#3b82f6; color:#fff; }
-.mp-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:1rem; }
+.mp-filter-btn:hover { border-color:var(--navy); color:var(--navy); text-decoration:none; }
+.mp-filter-btn.active { background:var(--navy); border-color:var(--navy); color:var(--gold); }
+
+.mp-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px,1fr)); gap:1.25rem; }
+
 .mp-card {
-  background:#1e293b; border:1px solid #334155; border-radius:12px;
-  padding:1.25rem; display:flex; flex-direction:column; gap:.75rem;
-  transition:border-color .15s;
+  background:var(--white); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:var(--shadow); padding:1.25rem; display:flex; flex-direction:column; gap:.75rem;
+  transition:box-shadow .15s, border-color .15s;
 }
-.mp-card:hover { border-color:#3b82f6; }
-.mp-card-header { display:flex; align-items:flex-start; gap:.75rem; }
-.mp-icon { font-size:2rem; line-height:1; flex-shrink:0; }
-.mp-card-name { font-size:1rem; font-weight:600; color:#f1f5f9; }
-.mp-card-cat {
-  display:inline-block; font-size:.7rem; font-weight:500;
-  padding:.15rem .5rem; border-radius:999px; margin-top:.25rem;
-  background:#0f172a; color:#64748b; border:1px solid #334155;
+.mp-card:hover { box-shadow:0 4px 20px rgba(0,0,0,.1); border-color:#c0c8dd; }
+
+.mp-card-head { display:flex; align-items:flex-start; gap:.85rem; }
+.mp-icon {
+  width:44px; height:44px; border-radius:10px; background:var(--bg2);
+  display:flex; align-items:center; justify-content:center; font-size:1.4rem;
+  flex-shrink:0; border:1px solid var(--border);
 }
-.mp-card-desc { font-size:.83rem; color:#94a3b8; line-height:1.55; flex:1; }
+.mp-card-name { font-size:.95rem; font-weight:700; color:var(--navy); }
+.mp-cat-badge {
+  display:inline-block; font-size:.7rem; font-weight:600;
+  padding:.15rem .55rem; border-radius:999px; margin-top:.3rem;
+  background:var(--bg2); color:var(--muted); border:1px solid var(--border);
+  text-transform:uppercase; letter-spacing:.04em;
+}
+.mp-desc { font-size:.83rem; color:var(--muted); line-height:1.6; flex:1; }
 .mp-tools { display:flex; flex-wrap:wrap; gap:.35rem; }
 .mp-tool {
   font-size:.72rem; padding:.2rem .55rem; border-radius:4px;
-  background:#0f172a; color:#60a5fa; border:1px solid #1e3a5f;
+  background:#eef3ff; color:var(--accent); border:1px solid #c7d7fa; font-weight:500;
 }
-.mp-card-footer { display:flex; align-items:center; gap:.5rem; margin-top:.25rem; }
-.mp-assign-form { display:flex; gap:.5rem; flex:1; }
-.mp-select {
-  flex:1; background:#0f172a; border:1px solid #334155; color:#e2e8f0;
-  border-radius:6px; padding:.35rem .6rem; font-size:.8rem;
-}
-.mp-btn {
-  padding:.35rem .8rem; border-radius:6px; font-size:.8rem; font-weight:500;
-  border:none; cursor:pointer; background:#3b82f6; color:#fff; white-space:nowrap;
-}
-.mp-btn:hover { background:#2563eb; }
-.mp-source { font-size:.72rem; color:#475569; text-decoration:none; }
-.mp-source:hover { color:#94a3b8; }
-.section-cat { font-size:.75rem; font-weight:600; color:#64748b; text-transform:uppercase;
-  letter-spacing:.08em; margin:1.5rem 0 .5rem; padding-bottom:.35rem;
-  border-bottom:1px solid #1e293b; }
+.mp-source { font-size:.75rem; color:var(--muted); text-decoration:none; }
+.mp-source:hover { color:var(--navy); text-decoration:underline; }
 </style>
 
-<div class="mp-header">
+<div class="page-header">
   <div>
-    <div class="mp-title">🤖 Agent Marketplace</div>
-    <div class="mp-subtitle">Browse and assign AI agents to investors · {{ agents|length }} agents available</div>
+    <h1 class="page-title">Agent Marketplace</h1>
+    <div class="page-sub">{{ agents|length }} AI agents available — assign them to investors from their profile page</div>
   </div>
 </div>
 
@@ -69,48 +61,31 @@
 </div>
 
 <!-- Agent grid -->
+{% if agents %}
 <div class="mp-grid">
   {% for agent in agents %}
   <div class="mp-card">
-    <div class="mp-card-header">
+    <div class="mp-card-head">
       <div class="mp-icon">{{ agent.icon }}</div>
       <div>
         <div class="mp-card-name">{{ agent.name }}</div>
-        <span class="mp-card-cat">{{ agent.category }}</span>
+        <span class="mp-cat-badge">{{ agent.category }}</span>
       </div>
     </div>
-
-    <div class="mp-card-desc">{{ agent.description }}</div>
-
+    <div class="mp-desc">{{ agent.description }}</div>
     <div class="mp-tools">
       {% for tool in agent.tools %}
       <span class="mp-tool">{{ tool }}</span>
       {% endfor %}
     </div>
-
-    <div class="mp-card-footer">
-      <form method="POST" action="{{ url_for('agent_marketplace_assign', agent_id=agent.id) }}"
-            class="mp-assign-form">
-        <select name="investor_session_id" class="mp-select" required>
-          <option value="">Assign to investor…</option>
-          {% for inv in investors %}
-          <option value="{{ inv.id }}">{{ inv.investor_name }}{% if inv.investor_entity %} · {{ inv.investor_entity }}{% endif %}</option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="mp-btn">Assign</button>
-      </form>
-    </div>
-
-    {% if agent.source_ref %}
-    <a href="{{ agent.source_ref }}" target="_blank" rel="noopener" class="mp-source">↗ Source</a>
-    {% endif %}
   </div>
   {% endfor %}
 </div>
-
-{% if not agents %}
-<div style="text-align:center; color:#475569; padding:3rem;">
-  No agents found for this category.
+{% else %}
+<div class="empty-card">
+  <div class="empty-icon">🤖</div>
+  <h3>No agents found</h3>
+  <p>Try a different category filter.</p>
 </div>
 {% endif %}
 {% endblock %}

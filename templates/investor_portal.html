@@ -193,6 +193,23 @@
       </div>
 
       {% if assigned_docs %}
+      <!-- My Agents nav link -->
+      <div style="padding:.5rem 1.25rem .25rem;">
+        <a href="{{ url_for('investor_agents') }}"
+           style="display:flex;align-items:center;gap:.6rem;padding:.55rem .75rem;border-radius:8px;
+                  background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.25);
+                  color:#c9a84c;font-size:.84rem;font-weight:600;text-decoration:none;transition:background .15s;"
+           onmouseover="this.style.background='rgba(201,168,76,.2)'"
+           onmouseout="this.style.background='rgba(201,168,76,.12)'">
+          <span style="font-size:1rem;">🤖</span> My Agents
+          {% set agent_count = assigned_agent_count | default(0) %}
+          {% if agent_count > 0 %}
+          <span style="margin-left:auto;background:#c9a84c;color:#0f1f3d;font-size:.68rem;font-weight:700;
+                       padding:.1rem .45rem;border-radius:999px;">{{ agent_count }}</span>
+          {% endif %}
+        </a>
+      </div>
+
       <div class="portal-doc-section">
         <div class="portal-sidebar-section">Available Documents</div>
         <div class="portal-doc-list">
@@ -224,8 +241,6 @@
       <div class="portal-user-name">{{ investor.name }}</div>
       <div style="display:flex;gap:.5rem;align-items:center;">
         <a href="{{ url_for('investor_profile') }}" class="portal-logout">Profile</a>
-        <span style="color:rgba(255,255,255,.2);">·</span>
-        <a href="{{ url_for('investor_agents') }}" class="portal-logout">My Agents</a>
         <span style="color:rgba(255,255,255,.2);">·</span>
         <a href="{{ url_for('investor_logout') }}" class="portal-logout">Sign out</a>
       </div>

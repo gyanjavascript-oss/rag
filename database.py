@@ -334,16 +334,31 @@ def init_db():
             )
         """)
 
+        # Agent memory — per-agent, per-investor learnings
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_memory (
+                id                  SERIAL PRIMARY KEY,
+                agent_id            INTEGER NOT NULL,
+                investor_session_id INTEGER NOT NULL,
+                memory_type         TEXT NOT NULL DEFAULT 'learning',
+                content             TEXT NOT NULL,
+                created_at          TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (agent_id) REFERENCES marketplace_agents(id) ON DELETE CASCADE,
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE
+            )
+        """)
+
         # Agent Marketplace
         cur.execute("""
             CREATE TABLE IF NOT EXISTS marketplace_agents (
                 id          SERIAL PRIMARY KEY,
-                name        TEXT NOT NULL,
+                name        TEXT NOT NULL UNIQUE,
                 description TEXT NOT NULL,
                 category    TEXT NOT NULL DEFAULT 'General',
                 tools       TEXT NOT NULL DEFAULT '[]',
                 icon        TEXT DEFAULT '🤖',
                 source_ref  TEXT DEFAULT '',
+                knowledge   TEXT DEFAULT '',
                 is_active   INTEGER NOT NULL DEFAULT 1,
                 created_at  TIMESTAMP DEFAULT NOW()
             )
@@ -359,6 +374,65 @@ def init_db():
                 FOREIGN KEY (agent_id) REFERENCES marketplace_agents(id) ON DELETE CASCADE,
                 FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE,
                 FOREIGN KEY (assigned_by) REFERENCES users(id)
+            )
+        """)
+
+        # Custom agent builder
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS custom_agents (
+                id                  SERIAL PRIMARY KEY,
+                name                TEXT NOT NULL,
+                description         TEXT DEFAULT '',
+                icon                TEXT DEFAULT '🤖',
+                system_prompt       TEXT DEFAULT '',
+                user_prompt         TEXT DEFAULT '',
+                input_type          TEXT NOT NULL DEFAULT 'chat',
+                output_type         TEXT NOT NULL DEFAULT 'chat',
+                output_webhook_url  TEXT DEFAULT '',
+                output_webhook_secret TEXT DEFAULT '',
+                api_key             TEXT NOT NULL UNIQUE,
+                tools               TEXT NOT NULL DEFAULT '[]',
+                is_active           INTEGER NOT NULL DEFAULT 1,
+                created_by          INTEGER,
+                created_at          TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            )
+        """)
+        # Migration: add user_prompt column if missing
+        cur.execute("""
+            ALTER TABLE custom_agents ADD COLUMN IF NOT EXISTS user_prompt TEXT DEFAULT ''
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS custom_agent_runs (
+                id          SERIAL PRIMARY KEY,
+                agent_id    INTEGER NOT NULL,
+                input_text  TEXT NOT NULL,
+                output_text TEXT DEFAULT '',
+                sources     TEXT DEFAULT '[]',
+                confidence  TEXT DEFAULT '',
+                input_src   TEXT DEFAULT 'chat',
+                status      TEXT DEFAULT 'pending',
+                created_at  TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (agent_id) REFERENCES custom_agents(id) ON DELETE CASCADE
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_schedules (
+                id               SERIAL PRIMARY KEY,
+                agent_id         INTEGER NOT NULL,
+                name             TEXT NOT NULL,
+                input_text       TEXT NOT NULL,
+                schedule_type    TEXT NOT NULL DEFAULT 'interval',
+                interval_minutes INTEGER DEFAULT 60,
+                daily_time       TEXT DEFAULT '09:00',
+                weekly_day       INTEGER DEFAULT 1,
+                is_active        INTEGER NOT NULL DEFAULT 1,
+                last_run_at      TIMESTAMP,
+                next_run_at      TIMESTAMP,
+                run_count        INTEGER DEFAULT 0,
+                created_at       TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (agent_id) REFERENCES custom_agents(id) ON DELETE CASCADE
             )
         """)
 
@@ -502,6 +576,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Text Extraction", "Summarization"],
         "icon": "📄",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Uses Document Search to locate relevant sections across all uploaded fund files (LPAs, PPMs, side letters, subscription docs). Text Extraction pulls exact clauses, defined terms, and page references. Summarization condenses multi-page sections into concise investor-ready summaries. Knows how to parse legal boilerplate, identify key obligations, and flag non-standard provisions. Ask it to find specific clauses, compare document versions, or explain complex terms in plain language.",
     },
     {
         "name": "Risk Assessment Agent",
@@ -510,6 +585,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Risk Scoring", "Report Generation"],
         "icon": "⚠️",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search locates risk disclosures, concentration limits, and leverage covenants buried in offering documents. Risk Scoring evaluates each identified risk factor on likelihood and impact — covering concentration risk, liquidity mismatch, key-person dependency, counterparty exposure, and market risk. Report Generation compiles findings into a structured risk summary with severity ratings. Best used to ask: what are the top risks in this fund, what leverage is permitted, who are the key persons, and what happens if they leave.",
     },
     {
         "name": "ESG Analysis Agent",
@@ -518,6 +594,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Policy Review", "ESG Scoring"],
         "icon": "🌿",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search finds ESG-related sections including responsible investment policies, exclusion lists, and Article 8/9 SFDR disclosures. Policy Review cross-references commitments against UN PRI, TCFD, and SFDR frameworks to check alignment. ESG Scoring rates the fund's overall ESG posture across Environmental (carbon, climate), Social (labour, DEI), and Governance (board structure, conflicts) dimensions. Ask it about ESG ratings, exclusion criteria, climate risk disclosures, or UN PRI signatory status.",
     },
     {
         "name": "Legal Review Agent",
@@ -526,6 +603,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Clause Extraction", "Legal Summarization"],
         "icon": "⚖️",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search retrieves specific legal provisions from LPAs, subscription agreements, and side letters. Clause Extraction isolates defined terms, conditions precedent, representation and warranty clauses, indemnities, and governing law provisions with exact text and location. Legal Summarization translates complex legal language into plain-English explanations. Covers: GP removal rights, advisory committee composition, transfer restrictions, default remedies, no-fault divorce triggers, and amendment procedures.",
     },
     {
         "name": "Financial Performance Analyst",
@@ -534,6 +612,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Data Analysis", "Benchmarking"],
         "icon": "📈",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search retrieves performance data from fund reports, capital account statements, and investor letters. Data Analysis calculates IRR (gross/net), MOIC, DPI (distributions to paid-in), RVPI (residual value to paid-in), and TVPI — breaking them down by vintage year, investment type, and portfolio company. Benchmarking compares returns against Cambridge Associates, Preqin quartile rankings, and public market equivalents (PME). Ask it about vintage year performance, net vs gross IRR spread, distribution history, or how the fund ranks vs peers.",
     },
     {
         "name": "Fee Structure Analyzer",
@@ -542,6 +621,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Fee Modeling", "Calculation Engine"],
         "icon": "💰",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search extracts fee provisions from the LPA including management fee basis, step-downs, offsets, and waiver terms. Fee Modeling maps out the full waterfall — return of capital, preferred return (hurdle), GP catch-up, and carried interest split — showing exactly when and how distributions flow. Calculation Engine runs net-of-fee return scenarios at different performance levels, models the impact of fee offsets (monitoring, transaction fees), and computes the true cost of the carry arrangement. Ask it to model scenarios, explain the waterfall, or compare fee terms to market standard.",
     },
     {
         "name": "Compliance Checker",
@@ -550,6 +630,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Regulatory Database", "Compliance Scoring"],
         "icon": "✅",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search locates regulatory disclosures, compliance policies, and registration statements within fund documents. Regulatory Database cross-checks disclosures against current requirements: AIFMD (EU alternative fund managers), Form ADV (SEC investment adviser registration), FATCA/CRS (tax information exchange), MiFID II (conflicts of interest), and GDPR (data protection). Compliance Scoring rates overall compliance posture and identifies gaps, missing disclosures, or outdated filings. Ask about regulatory registrations, conflicts of interest disclosures, or anti-money laundering procedures.",
     },
     {
         "name": "Investment Strategy Analyzer",
@@ -558,6 +639,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Market Research", "Peer Comparison"],
         "icon": "🎯",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search retrieves the investment mandate, target sectors, stage focus, check-size parameters, and portfolio construction guidelines from the PPM or offering documents. Market Research (web search + browsing) pulls current market data, sector trends, and deal activity to validate the thesis against real conditions. Peer Comparison benchmarks the strategy against comparable fund managers — coverage, differentiation, and competitive positioning. Ask about the investment thesis, target sectors, deal sourcing edge, how the strategy has evolved, or how it compares to peer managers.",
     },
     {
         "name": "Portfolio Analytics Agent",
@@ -566,6 +648,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Portfolio Modeling", "Visualization"],
         "icon": "🗂️",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search retrieves portfolio schedules, company descriptions, investment dates, and cost/fair value data from fund reports. Portfolio Modeling calculates sector concentration, stage distribution (seed/A/B/growth), geographic exposure, follow-on reserve ratios, and ownership percentages. Visualization generates charts showing portfolio composition, NAV bridge, and company-level attribution. Ask it about portfolio concentration, sector breakdown, reserve strategy, largest positions, or which companies are marked up/down.",
     },
     {
         "name": "DDQ Auto-Responder",
@@ -574,6 +657,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Knowledge Base", "Draft Generation"],
         "icon": "✍️",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search retrieves source material from all fund documents to ground every response in actual fund data. Knowledge Base draws on previously approved DDQ answers, institutional best practices, and ILPA/QPAM standard question libraries. Draft Generation produces polished, fund-specific responses that follow institutional DDQ conventions — structured sections, appropriate disclaimers, and consistent tone. Handles standard question categories: AML/KYC, compliance, risk, performance, team, ESG, operations, and legal. Ask it to draft a response to any DDQ question or review/improve an existing answer.",
     },
     {
         "name": "Report Generator",
@@ -582,14 +666,16 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Template Engine", "PDF Generation"],
         "icon": "📊",
         "source_ref": "https://github.com/anthropics/skills",
+        "knowledge": "Document Search pulls financial data, portfolio updates, and narrative content from the fund's source documents. Template Engine applies institutional report formats — quarterly investor letters (QIR), capital account statements, capital call and distribution notices, and annual reports — ensuring consistent structure and required sections. Covers: portfolio company updates, NAV reconciliation, cash flow summaries, and LP-specific account information. Ask it to draft a quarterly update, prepare a capital call notice, summarise recent portfolio activity, or create a distribution notice.",
     },
     {
         "name": "Research Assistant",
         "description": "Provides market context, sector analysis, and comparable fund benchmarking to support investment decision-making and due diligence processes.",
         "category": "Research",
-        "tools": ["Web Search", "Document Search", "Summarization"],
+        "tools": ["Web Search", "URL Browser", "Document Search", "Summarization"],
         "icon": "🔬",
         "source_ref": "https://github.com/anthropics/skills",
+        "knowledge": "Web Search queries live internet sources (DuckDuckGo) for real-time market data, company financials, news, and sector trends — always using the current year for accurate results. URL Browser opens and reads full web pages (Yahoo Finance, Reuters, Bloomberg, Wikipedia, company sites) to extract precise figures like market caps, revenue, valuation multiples, and news. Document Search checks fund documents for internal context. Summarization synthesises multi-source findings into a clear, cited answer with charts when data is numerical. Ask anything about external markets: company valuations, sector trends, competitor analysis, macroeconomic data, or recent news.",
     },
     {
         "name": "Tax & Structure Advisor",
@@ -598,6 +684,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Tax Analysis", "Structure Review"],
         "icon": "🏛️",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search retrieves fund structure diagrams, partnership agreement tax provisions, and side-letter tax accommodations. Tax Analysis evaluates US tax considerations: UBTI (unrelated business taxable income) for tax-exempt LPs, ECI (effectively connected income) for foreign investors, PFIC/CFC implications, withholding obligations, and K-1 reporting timelines. Structure Review assesses the fund vehicle stack — master/feeder, parallel funds, blocker corporations, SPVs — and explains why each entity exists and its tax purpose. Ask about the fund structure, tax documents timeline, blocker availability, treaty benefits, or whether UBTI is an issue for pension fund investors.",
     },
     {
         "name": "LP Rights Monitor",
@@ -606,6 +693,7 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Rights Extraction", "Alert System"],
         "icon": "🛡️",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search locates LP-protective provisions across the LPA, side letters, and subscription documents. Rights Extraction catalogues all LP rights by type: information rights (financial statements, K-1 timing, site visits), consent rights (LPAC approval thresholds, major decisions), protective rights (key-person clause triggers, no-fault removal vote, GP cause removal), economic rights (MFN provisions, fee offsets, co-investment allocation). Alert System flags upcoming obligations, notice periods, and time-sensitive LP action windows. Ask it what rights you have as an LP, whether MFN applies, how to trigger the key-person clause, or what LPAC approval is required for GP decisions.",
     },
     {
         "name": "Valuation Review Agent",
@@ -614,19 +702,28 @@ _MARKETPLACE_AGENTS = [
         "tools": ["Document Search", "Valuation Models", "IPEV Guidelines"],
         "icon": "🔍",
         "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+        "knowledge": "Document Search retrieves valuation policies, fair value disclosures, and portfolio marks from financial statements and offering documents. Valuation Models applies and explains standard PE/VC valuation approaches: comparable company analysis (EV/Revenue, EV/EBITDA multiples), discounted cash flow (DCF), last-round financing method, and option-pricing model (OPM) for early-stage companies. IPEV Guidelines cross-checks the fund's stated methodology against the International Private Equity Valuation Board's best practice guidelines to identify deviations, stale marks, or aggressive assumptions. Ask about specific company valuations, the valuation basis used, whether independent valuers are used, or how marks compare to public peers.",
     },
 ]
 
 
 def _seed_marketplace_agents(cur):
+    # Add knowledge column if it doesn't exist yet (safe migration)
+    cur.execute("""
+        ALTER TABLE marketplace_agents ADD COLUMN IF NOT EXISTS knowledge TEXT DEFAULT ''
+    """)
     for agent in _MARKETPLACE_AGENTS:
         cur.execute("""
-            INSERT INTO marketplace_agents (name, description, category, tools, icon, source_ref)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT DO NOTHING
+            INSERT INTO marketplace_agents (name, description, category, tools, icon, source_ref, knowledge)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (name) DO UPDATE
+              SET description = EXCLUDED.description,
+                  tools       = EXCLUDED.tools,
+                  knowledge   = EXCLUDED.knowledge
         """, (
             agent["name"], agent["description"], agent["category"],
-            json.dumps(agent["tools"]), agent["icon"], agent["source_ref"]
+            json.dumps(agent["tools"]), agent["icon"], agent["source_ref"],
+            agent.get("knowledge", "")
         ))
 
 
@@ -2037,6 +2134,20 @@ def get_llm_usage_stats() -> list:
 
 # ── Agent Marketplace ──────────────────────────────────────────────────────────
 
+def _parse_agent(d: dict) -> dict:
+    """Parse JSON fields on a marketplace_agents row."""
+    if isinstance(d.get("tools"), str):
+        try:
+            d["tools"] = json.loads(d["tools"])
+        except Exception:
+            d["tools"] = []
+    if not isinstance(d.get("tools"), list):
+        d["tools"] = []
+    if d.get("knowledge") is None:
+        d["knowledge"] = ""
+    return d
+
+
 def list_marketplace_agents(category: str = None) -> list:
     conn = get_db()
     try:
@@ -2048,7 +2159,7 @@ def list_marketplace_agents(category: str = None) -> list:
             """, (category,))
         else:
             cur.execute("SELECT * FROM marketplace_agents WHERE is_active=1 ORDER BY category, name")
-        return [_row(dict(r)) for r in cur.fetchall()]
+        return [_parse_agent(_row(dict(r))) for r in cur.fetchall()]
     finally:
         put_db(conn)
 
@@ -2059,7 +2170,7 @@ def get_marketplace_agent(agent_id: int) -> dict:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SELECT * FROM marketplace_agents WHERE id=%s", (agent_id,))
         row = cur.fetchone()
-        return _row(dict(row)) if row else None
+        return _parse_agent(_row(dict(row))) if row else None
     finally:
         put_db(conn)
 
@@ -2109,7 +2220,7 @@ def get_assigned_agents(investor_session_id: int) -> list:
             WHERE aa.investor_session_id=%s AND ma.is_active=1
             ORDER BY ma.category, ma.name
         """, (investor_session_id,))
-        return [_row(dict(r)) for r in cur.fetchall()]
+        return [_parse_agent(_row(dict(r))) for r in cur.fetchall()]
     finally:
         put_db(conn)
 
@@ -2130,5 +2241,320 @@ def list_marketplace_categories() -> list:
         cur = conn.cursor()
         cur.execute("SELECT DISTINCT category FROM marketplace_agents WHERE is_active=1 ORDER BY category")
         return [r[0] for r in cur.fetchall()]
+    finally:
+        put_db(conn)
+
+
+# ── Agent Memory ───────────────────────────────────────────────────────────────
+
+def get_agent_memory(agent_id: int, investor_session_id: int, limit: int = 20) -> list:
+    """Load this agent's memories for this investor (most recent first)."""
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT memory_type, content, created_at
+            FROM agent_memory
+            WHERE agent_id=%s AND investor_session_id=%s
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (agent_id, investor_session_id, limit))
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
+
+
+def add_agent_memory(agent_id: int, investor_session_id: int,
+                     memory_type: str, content: str):
+    """Store a new memory for this agent+investor pair."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO agent_memory (agent_id, investor_session_id, memory_type, content)
+            VALUES (%s, %s, %s, %s)
+        """, (agent_id, investor_session_id, memory_type, content))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        put_db(conn)
+
+
+def clear_agent_memory(agent_id: int, investor_session_id: int):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM agent_memory WHERE agent_id=%s AND investor_session_id=%s",
+                    (agent_id, investor_session_id))
+        conn.commit()
+    finally:
+        put_db(conn)
+
+
+# ── Custom Agent Builder ───────────────────────────────────────────────────────
+
+def _gen_api_key() -> str:
+    import secrets
+    return "cag_" + secrets.token_urlsafe(32)
+
+
+def create_custom_agent(name: str, description: str, icon: str, system_prompt: str,
+                        user_prompt: str, input_type: str, output_type: str,
+                        output_webhook_url: str, output_webhook_secret: str,
+                        tools: list, created_by: int) -> dict:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        api_key = _gen_api_key()
+        cur.execute("""
+            INSERT INTO custom_agents
+              (name, description, icon, system_prompt, user_prompt, input_type, output_type,
+               output_webhook_url, output_webhook_secret, tools, api_key, created_by)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING *
+        """, (name, description, icon, system_prompt, user_prompt, input_type, output_type,
+              output_webhook_url, output_webhook_secret, json.dumps(tools), api_key, created_by))
+        row = cur.fetchone()
+        conn.commit()
+        return _parse_custom_agent(dict(row))
+    finally:
+        put_db(conn)
+
+
+def update_custom_agent(agent_id: int, name: str, description: str, icon: str,
+                        system_prompt: str, user_prompt: str, input_type: str,
+                        output_type: str, output_webhook_url: str,
+                        output_webhook_secret: str, tools: list) -> bool:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE custom_agents SET
+              name=%s, description=%s, icon=%s, system_prompt=%s, user_prompt=%s,
+              input_type=%s, output_type=%s, output_webhook_url=%s,
+              output_webhook_secret=%s, tools=%s
+            WHERE id=%s
+        """, (name, description, icon, system_prompt, user_prompt, input_type, output_type,
+              output_webhook_url, output_webhook_secret, json.dumps(tools), agent_id))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        put_db(conn)
+
+
+def delete_custom_agent(agent_id: int) -> bool:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM custom_agents WHERE id=%s", (agent_id,))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        put_db(conn)
+
+
+def list_custom_agents(created_by: int = None) -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        if created_by:
+            cur.execute("SELECT * FROM custom_agents WHERE created_by=%s ORDER BY created_at DESC", (created_by,))
+        else:
+            cur.execute("SELECT * FROM custom_agents ORDER BY created_at DESC")
+        return [_parse_custom_agent(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
+
+
+def get_custom_agent(agent_id: int) -> dict:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM custom_agents WHERE id=%s", (agent_id,))
+        row = cur.fetchone()
+        return _parse_custom_agent(dict(row)) if row else None
+    finally:
+        put_db(conn)
+
+
+def get_custom_agent_by_key(api_key: str) -> dict:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM custom_agents WHERE api_key=%s AND is_active=1", (api_key,))
+        row = cur.fetchone()
+        return _parse_custom_agent(dict(row)) if row else None
+    finally:
+        put_db(conn)
+
+
+def _parse_custom_agent(d: dict) -> dict:
+    if isinstance(d.get("tools"), str):
+        try:
+            d["tools"] = json.loads(d["tools"])
+        except Exception:
+            d["tools"] = []
+    if not isinstance(d.get("tools"), list):
+        d["tools"] = []
+    return d
+
+
+# ── Agent Schedules ──────────────────────────────────────────────────────────
+
+def _compute_next_run(schedule_type: str, interval_minutes: int,
+                      daily_time: str, weekly_day: int) -> str:
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    if schedule_type == 'interval':
+        nxt = now + timedelta(minutes=max(1, interval_minutes))
+    elif schedule_type == 'daily':
+        try:
+            h, m = [int(x) for x in (daily_time or '09:00').split(':')]
+        except Exception:
+            h, m = 9, 0
+        nxt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if nxt <= now:
+            nxt += timedelta(days=1)
+    elif schedule_type == 'weekly':
+        try:
+            h, m = [int(x) for x in (daily_time or '09:00').split(':')]
+        except Exception:
+            h, m = 9, 0
+        target_dow = int(weekly_day or 1) % 7  # 0=Mon
+        days_ahead = (target_dow - now.weekday()) % 7
+        nxt = (now + timedelta(days=days_ahead)).replace(hour=h, minute=m, second=0, microsecond=0)
+        if nxt <= now:
+            nxt += timedelta(weeks=1)
+    else:
+        nxt = now + timedelta(hours=1)
+    return nxt.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def create_agent_schedule(agent_id: int, name: str, input_text: str,
+                          schedule_type: str, interval_minutes: int,
+                          daily_time: str, weekly_day: int) -> dict:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        next_run = _compute_next_run(schedule_type, interval_minutes, daily_time, weekly_day)
+        cur.execute("""
+            INSERT INTO agent_schedules
+              (agent_id, name, input_text, schedule_type, interval_minutes,
+               daily_time, weekly_day, next_run_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+        """, (agent_id, name, input_text, schedule_type, interval_minutes,
+              daily_time, weekly_day, next_run))
+        row = dict(cur.fetchone())
+        conn.commit()
+        return row
+    finally:
+        put_db(conn)
+
+
+def list_agent_schedules(agent_id: int) -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM agent_schedules WHERE agent_id=%s ORDER BY created_at DESC",
+                    (agent_id,))
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
+
+
+def toggle_agent_schedule(schedule_id: int) -> bool:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE agent_schedules SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END
+            WHERE id=%s
+        """, (schedule_id,))
+        conn.commit()
+        return True
+    finally:
+        put_db(conn)
+
+
+def delete_agent_schedule(schedule_id: int) -> bool:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM agent_schedules WHERE id=%s", (schedule_id,))
+        conn.commit()
+        return True
+    finally:
+        put_db(conn)
+
+
+def get_due_schedules() -> list:
+    """Return active schedules whose next_run_at is due, atomically claiming them."""
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT s.*, ca.system_prompt, ca.user_prompt, ca.tools,
+                   ca.output_type, ca.output_webhook_url, ca.output_webhook_secret, ca.api_key
+            FROM agent_schedules s
+            JOIN custom_agents ca ON ca.id = s.agent_id
+            WHERE s.is_active = 1 AND s.next_run_at <= NOW()
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        # Immediately push next_run_at forward to prevent double-execution
+        for row in rows:
+            next_run = _compute_next_run(
+                row['schedule_type'], row.get('interval_minutes', 60),
+                row.get('daily_time', '09:00'), row.get('weekly_day', 1))
+            cur.execute("""
+                UPDATE agent_schedules
+                SET last_run_at=NOW(), next_run_at=%s, run_count=run_count+1
+                WHERE id=%s
+            """, (next_run, row['id']))
+        conn.commit()
+        return rows
+    finally:
+        put_db(conn)
+
+
+def save_custom_agent_run(agent_id: int, input_text: str, output_text: str,
+                          sources: list, confidence: str, input_src: str) -> int:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO custom_agent_runs (agent_id, input_text, output_text, sources, confidence, input_src, status)
+            VALUES (%s,%s,%s,%s,%s,%s,'done') RETURNING id
+        """, (agent_id, input_text, output_text, json.dumps(sources), confidence, input_src))
+        row_id = cur.fetchone()[0]
+        conn.commit()
+        return row_id
+    finally:
+        put_db(conn)
+
+
+def get_custom_agent_runs(agent_id: int, limit: int = 50) -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT * FROM custom_agent_runs WHERE agent_id=%s ORDER BY created_at DESC LIMIT %s
+        """, (agent_id, limit))
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if isinstance(d.get("sources"), str):
+                try:
+                    d["sources"] = json.loads(d["sources"])
+                except Exception:
+                    d["sources"] = []
+            rows.append(d)
+        return rows
     finally:
         put_db(conn)

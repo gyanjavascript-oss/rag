@@ -21,12 +21,31 @@ from agent import stream_answer, generate_investor_profile
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret-change-me")
 
+import re as _re
+
+@app.template_filter('clean_question')
+def clean_question_filter(text: str) -> str:
+    """Strip [Agent — Category]: prefix from questions shown in admin views."""
+    q = _re.sub(r'^\[[^\]]+\]:\s*', '', (text or '')).strip()
+    return (q[0].upper() + q[1:]) if q else (text or '')
+
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 FUND_DOCS_FOLDER = os.path.join(os.path.dirname(__file__), "documents")
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".doc"}
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(FUND_DOCS_FOLDER, exist_ok=True)
+
+
+def _make_conv_title(question: str) -> str:
+    """Strip agent context prefix and return a clean, capitalised conversation title."""
+    import re
+    # Strip [Agent Name — Category]: prefix added by the chat UI
+    q = re.sub(r'^\[[^\]]+\]:\s*', '', question).strip()
+    # Capitalise first letter, trim to 72 chars
+    if q:
+        q = q[0].upper() + q[1:]
+    return q[:72] if q else question[:72]
 
 db.init_db()
 
@@ -272,7 +291,7 @@ def chat_stream(conv_id):
     # Auto-title first message
     history = db.get_messages(conv_id)
     if len([m for m in history if m["role"] == "user"]) == 1 and not conv["title"]:
-        db.update_conversation_title(conv_id, question[:80])
+        db.update_conversation_title(conv_id, _make_conv_title(question))
 
     # Build history for agent (exclude current question)
     agent_history = [
@@ -473,6 +492,13 @@ def investor_detail(session_id):
         except Exception:
             pass
 
+    all_agents = db.list_marketplace_agents()
+    for a in all_agents:
+        if isinstance(a.get("tools"), str):
+            try: a["tools"] = json.loads(a["tools"])
+            except Exception: a["tools"] = []
+    assigned_agent_ids = db.get_investor_agent_ids(session_id)
+
     return render_template(
         "investor_detail.html",
         user=_current_user(),
@@ -483,6 +509,8 @@ def investor_detail(session_id):
         assigned_doc_ids=assigned_doc_ids,
         investor_user=investor_user,
         profile=profile,
+        all_agents=all_agents,
+        assigned_agent_ids=assigned_agent_ids,
         fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
     )
 
@@ -854,12 +882,14 @@ def investor_portal():
     investor_session = db.get_investor_session(inv["session_id"])
     conversations = db.list_investor_conversations(inv["session_id"])
     assigned_docs = db.get_assigned_documents(inv["session_id"])
+    assigned_agent_count = len(db.get_investor_agent_ids(inv["session_id"]))
     return render_template(
         "investor_portal.html",
         investor=inv,
         investor_session=investor_session,
         conversations=conversations,
         assigned_docs=assigned_docs,
+        assigned_agent_count=assigned_agent_count,
         active_conv=None,
         messages=[],
         fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
@@ -870,11 +900,16 @@ def investor_portal():
 @investor_login_required
 def investor_new_chat():
     inv = _current_investor()
+    title = request.form.get("title") or None
     conv_id = db.create_conversation(
         created_by=inv["id"],
         investor_session_id=inv["session_id"],
-        title=None,
+        title=title,
     )
+    # Return JSON if requested (agent chat), otherwise redirect
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest" or \
+       request.accept_mimetypes.accept_json:
+        return jsonify({"conversation_id": conv_id})
     return redirect(url_for("investor_chat_view", conv_id=conv_id))
 
 
@@ -891,12 +926,14 @@ def investor_chat_view(conv_id):
     investor_session = db.get_investor_session(inv["session_id"])
     conversations = db.list_investor_conversations(inv["session_id"])
     assigned_docs = db.get_assigned_documents(inv["session_id"])
+    assigned_agent_count = len(db.get_investor_agent_ids(inv["session_id"]))
     return render_template(
         "investor_portal.html",
         investor=inv,
         investor_session=investor_session,
         conversations=conversations,
         assigned_docs=assigned_docs,
+        assigned_agent_count=assigned_agent_count,
         active_conv=conv,
         messages=messages,
         fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
@@ -924,10 +961,11 @@ def investor_rename_chat(conv_id):
 @app.route("/investor/chat/<int:conv_id>/stream")
 @investor_login_required
 def investor_chat_stream(conv_id):
-    question = request.args.get("q", "").strip()
+    raw_question = request.args.get("q", "").strip()
+    agent_id = request.args.get("agent_id", type=int)
     inv = _current_investor()
 
-    if not question:
+    if not raw_question:
         return Response('data: {"type":"error","message":"Empty question"}\n\n',
                         mimetype="text/event-stream")
 
@@ -936,14 +974,24 @@ def investor_chat_stream(conv_id):
         return Response('data: {"type":"error","message":"Not found"}\n\n',
                         mimetype="text/event-stream")
 
+    # Strip agent context prefix before saving — keep clean question in DB
+    # but pass full contextual question to the LLM so it knows the agent persona
+    question = _make_conv_title(raw_question)  # strips [Agent — Cat]: prefix
+    question_for_llm = raw_question            # keeps prefix for LLM context
+
     investor_session = db.get_investor_session(inv["session_id"])
     investor_name = investor_session["investor_name"] if investor_session else None
+
+    # Load agent memory if this is an agent chat
+    agent_memories = []
+    if agent_id:
+        agent_memories = db.get_agent_memory(agent_id, inv["session_id"])
 
     db.add_message(conv_id, "user", question)
 
     history = db.get_messages(conv_id)
     if len([m for m in history if m["role"] == "user"]) == 1:
-        db.update_conversation_title(conv_id, question[:80])
+        db.update_conversation_title(conv_id, question)
 
     agent_history = [
         m for m in history
@@ -953,11 +1001,12 @@ def investor_chat_stream(conv_id):
     def generate():
         final_result = None
         for chunk in stream_answer(
-            question=question,
+            question=question_for_llm,
             conversation_history=agent_history,
             investor_session_id=inv["session_id"],
             investor_name=investor_name,
             is_investor=True,
+            agent_memories=agent_memories,
         ):
             yield chunk
             if '"type": "result"' in chunk or '"type":"result"' in chunk:
@@ -976,6 +1025,22 @@ def investor_chat_stream(conv_id):
                 draft_response=final_result.get("draft_response", ""),
                 themes=final_result.get("themes", []),
             )
+            # Save memory: what was learned from this exchange
+            if agent_id:
+                confidence = final_result.get("confidence", "")
+                gaps = final_result.get("gaps")
+                if confidence == "low" or gaps:
+                    db.add_agent_memory(
+                        agent_id, inv["session_id"], "gap",
+                        f"Q: {question[:200]} | Gap: {str(gaps)[:300]}"
+                    )
+                elif confidence == "high":
+                    themes = final_result.get("themes", [])
+                    if themes:
+                        db.add_agent_memory(
+                            agent_id, inv["session_id"], "interest",
+                            f"Investor asked about: {', '.join(themes[:3])} — '{question[:150]}'"
+                        )
 
     return Response(
         stream_with_context(generate()),
@@ -1102,7 +1167,7 @@ def agent_handover_reply(handover_id):
     conn.close()
     if not row:
         return jsonify({"error": "not found"}), 404
-    msg_id = db.add_message(row[0], "human_agent", message)
+    msg_id = db.add_message(row['conversation_id'], "human_agent", message)
     return jsonify({"status": "ok", "msg_id": msg_id, "agent_name": user["name"]})
 
 
@@ -1116,7 +1181,7 @@ def agent_handover_poll(handover_id):
     if not row:
         return jsonify({"error": "not found"}), 404
     last_id = int(request.args.get("last_id", 0))
-    new_msgs = db.get_messages_since(row[0], last_id)
+    new_msgs = db.get_messages_since(row['conversation_id'], last_id)
     return jsonify({"messages": new_msgs})
 
 
@@ -1127,7 +1192,7 @@ def agent_resolve_handover(handover_id):
     row = conn.execute("SELECT conversation_id FROM handover_requests WHERE id=?", (handover_id,)).fetchone()
     conn.close()
     if row:
-        db.add_message(row[0], "system", "This conversation has been resolved by the fund team. You may continue using the portal.")
+        db.add_message(row['conversation_id'], "system", "This conversation has been resolved by the fund team. You may continue using the portal.")
     db.resolve_handover(handover_id)
     flash("Handover resolved.", "success")
     return redirect(url_for("agent_handovers"))
@@ -1300,6 +1365,304 @@ def llm_keys_move(key_id):
 
 # ── Agent Marketplace ──────────────────────────────────────────────────────────
 
+
+# ── Custom Agent Builder ───────────────────────────────────────────────────────
+
+CUSTOM_AGENT_TOOLS = [
+    "Document Search", "Web Search", "URL Browser",
+    "Summarization", "Data Analysis", "Report Generation",
+    "Knowledge Base", "Draft Generation",
+]
+
+@app.route("/custom-agents")
+@login_required
+def custom_agents():
+    agents = db.list_custom_agents()
+    return render_template("custom_agents.html", agents=agents, user=_current_user())
+
+
+@app.route("/custom-agents/new", methods=["GET", "POST"])
+@login_required
+def custom_agent_new():
+    if request.method == "POST":
+        tools = request.form.getlist("tools")
+        agent = db.create_custom_agent(
+            name=request.form["name"].strip(),
+            description=request.form.get("description", "").strip(),
+            icon=request.form.get("icon", "🤖").strip() or "🤖",
+            system_prompt=request.form.get("system_prompt", "").strip(),
+            user_prompt=request.form.get("user_prompt", "").strip(),
+            input_type=request.form.get("input_type", "chat"),
+            output_type=request.form.get("output_type", "chat"),
+            output_webhook_url=request.form.get("output_webhook_url", "").strip(),
+            output_webhook_secret=request.form.get("output_webhook_secret", "").strip(),
+            tools=tools,
+            created_by=session["user_id"],
+        )
+        flash(f"Agent '{agent['name']}' created.", "success")
+        return redirect(url_for("custom_agent_detail", agent_id=agent["id"]))
+    return render_template("custom_agent_form.html", agent=None, all_tools=CUSTOM_AGENT_TOOLS, user=_current_user())
+
+
+@app.route("/custom-agents/<int:agent_id>", methods=["GET", "POST"])
+@login_required
+def custom_agent_detail(agent_id):
+    agent = db.get_custom_agent(agent_id)
+    if not agent:
+        flash("Agent not found.", "error")
+        return redirect(url_for("custom_agents"))
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "delete":
+            db.delete_custom_agent(agent_id)
+            flash("Agent deleted.", "success")
+            return redirect(url_for("custom_agents"))
+        tools = request.form.getlist("tools")
+        db.update_custom_agent(
+            agent_id=agent_id,
+            name=request.form["name"].strip(),
+            description=request.form.get("description", "").strip(),
+            icon=request.form.get("icon", "🤖").strip() or "🤖",
+            system_prompt=request.form.get("system_prompt", "").strip(),
+            user_prompt=request.form.get("user_prompt", "").strip(),
+            input_type=request.form.get("input_type", "chat"),
+            output_type=request.form.get("output_type", "chat"),
+            output_webhook_url=request.form.get("output_webhook_url", "").strip(),
+            output_webhook_secret=request.form.get("output_webhook_secret", "").strip(),
+            tools=tools,
+        )
+        flash("Agent updated.", "success")
+        return redirect(url_for("custom_agent_detail", agent_id=agent_id))
+    runs = db.get_custom_agent_runs(agent_id, limit=20)
+    schedules = db.list_agent_schedules(agent_id)
+    return render_template("custom_agent_form.html", agent=agent,
+                           all_tools=CUSTOM_AGENT_TOOLS, runs=runs,
+                           schedules=schedules, user=_current_user())
+
+
+@app.route("/custom-agents/<int:agent_id>/chat")
+@login_required
+def custom_agent_chat(agent_id):
+    agent = db.get_custom_agent(agent_id)
+    if not agent:
+        return redirect(url_for("custom_agents"))
+    return render_template("custom_agent_chat.html", agent=agent, user=_current_user())
+
+
+@app.route("/custom-agents/<int:agent_id>/stream")
+@login_required
+def custom_agent_stream(agent_id):
+    agent = db.get_custom_agent(agent_id)
+    if not agent:
+        return Response('data: {"type":"error","message":"Agent not found"}\n\n',
+                        mimetype="text/event-stream")
+    question = request.args.get("q", "").strip()
+    if not question:
+        return Response('data: {"type":"error","message":"Empty input"}\n\n',
+                        mimetype="text/event-stream")
+
+    # Build custom system prompt
+    custom_prompt = agent.get("system_prompt") or ""
+    # Apply user prompt template: replace {{input}} with the actual question
+    user_prompt_tpl = agent.get("user_prompt") or ""
+    question_for_llm = user_prompt_tpl.replace("{{input}}", question).strip() if user_prompt_tpl else question
+
+    def generate():
+        full_answer = ""
+        final_result = None
+        for chunk in stream_answer(
+            question=question_for_llm,
+            conversation_history=[],
+            is_investor=False,
+            custom_system_prompt=custom_prompt or None,
+        ):
+            yield chunk
+            if '"type": "result"' in chunk or '"type":"result"' in chunk:
+                try:
+                    data = json.loads(chunk.replace("data: ", "").strip())
+                    if data.get("type") == "result":
+                        final_result = data.get("data", {})
+                        full_answer = final_result.get("answer", "")
+                except Exception:
+                    pass
+
+        # Save run
+        if final_result:
+            db.save_custom_agent_run(
+                agent_id=agent_id,
+                input_text=question,
+                output_text=full_answer,
+                sources=final_result.get("sources", []),
+                confidence=final_result.get("confidence", ""),
+                input_src="chat",
+            )
+            # Fire webhook if configured
+            _fire_webhook(agent, full_answer, final_result, question)
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream",
+                    headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
+
+
+def _fire_webhook(agent: dict, answer: str, result: dict, input_text: str):
+    url = agent.get("output_webhook_url", "").strip()
+    if not url:
+        return
+    try:
+        import urllib.request, hmac, hashlib
+        payload = json.dumps({
+            "agent_id": agent["id"],
+            "agent_name": agent["name"],
+            "input": input_text,
+            "output": answer,
+            "sources": result.get("sources", []),
+            "confidence": result.get("confidence", ""),
+        }).encode()
+        headers = {"Content-Type": "application/json"}
+        secret = agent.get("output_webhook_secret", "").strip()
+        if secret:
+            sig = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+            headers["X-Signature-SHA256"] = f"sha256={sig}"
+        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+
+# ── Public API endpoint ────────────────────────────────────────────────────────
+
+@app.route("/api/v1/agents/<api_key>/run", methods=["POST"])
+def custom_agent_api_run(api_key):
+    agent = db.get_custom_agent_by_key(api_key)
+    if not agent:
+        return jsonify({"error": "Invalid API key"}), 401
+    if agent.get("input_type") not in ("api", "both"):
+        return jsonify({"error": "This agent does not accept API input"}), 403
+
+    body = request.get_json(silent=True) or {}
+    question = (body.get("input") or body.get("question") or body.get("message") or "").strip()
+    if not question:
+        return jsonify({"error": "Missing 'input' field"}), 400
+
+    custom_prompt = agent.get("system_prompt") or ""
+    user_prompt_tpl = agent.get("user_prompt") or ""
+    question_for_llm = user_prompt_tpl.replace("{{input}}", question).strip() if user_prompt_tpl else question
+    from agent import answer_question
+    result = answer_question(
+        question=question_for_llm,
+        conversation_history=[],
+        is_investor=False,
+        custom_system_prompt=custom_prompt or None,
+    )
+
+    answer = result.get("answer", "")
+    db.save_custom_agent_run(
+        agent_id=agent["id"],
+        input_text=question,
+        output_text=answer,
+        sources=result.get("sources", []),
+        confidence=result.get("confidence", ""),
+        input_src="api",
+    )
+    _fire_webhook(agent, answer, result, question)
+
+    return jsonify({
+        "agent_id": agent["id"],
+        "agent_name": agent["name"],
+        "input": question,
+        "output": answer,
+        "sources": result.get("sources", []),
+        "confidence": result.get("confidence", ""),
+        "themes": result.get("themes", []),
+    })
+
+
+# ── Agent Scheduler routes ────────────────────────────────────────────────────
+
+@app.route("/custom-agents/<int:agent_id>/schedules", methods=["POST"])
+@login_required
+def create_agent_schedule(agent_id):
+    agent = db.get_custom_agent(agent_id)
+    if not agent:
+        return jsonify({"error": "Not found"}), 404
+    data = request.get_json(silent=True) or request.form
+    schedule = db.create_agent_schedule(
+        agent_id=agent_id,
+        name=(data.get("name") or "").strip() or "Scheduled Run",
+        input_text=(data.get("input_text") or "").strip(),
+        schedule_type=data.get("schedule_type", "interval"),
+        interval_minutes=int(data.get("interval_minutes") or 60),
+        daily_time=data.get("daily_time", "09:00"),
+        weekly_day=int(data.get("weekly_day") or 1),
+    )
+    return jsonify(schedule)
+
+
+@app.route("/custom-agents/<int:agent_id>/schedules/<int:schedule_id>/toggle", methods=["POST"])
+@login_required
+def toggle_agent_schedule(agent_id, schedule_id):
+    db.toggle_agent_schedule(schedule_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/custom-agents/<int:agent_id>/schedules/<int:schedule_id>", methods=["DELETE"])
+@login_required
+def delete_agent_schedule(agent_id, schedule_id):
+    db.delete_agent_schedule(schedule_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/v1/cron/tick", methods=["POST"])
+def cron_tick():
+    """Called by server cron every minute to execute due schedules."""
+    secret = request.headers.get("X-Cron-Secret", "")
+    if secret != app.config.get("CRON_SECRET", "vcurd-cron-2026"):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    from agent import answer_question
+    due = db.get_due_schedules()
+    results = []
+    for sched in due:
+        try:
+            custom_prompt = sched.get("system_prompt") or ""
+            user_prompt_tpl = sched.get("user_prompt") or ""
+            q = sched["input_text"]
+            question_for_llm = user_prompt_tpl.replace("{{input}}", q).strip() if user_prompt_tpl else q
+
+            result = answer_question(
+                question=question_for_llm,
+                conversation_history=[],
+                is_investor=False,
+                custom_system_prompt=custom_prompt or None,
+            )
+            answer = result.get("answer", "")
+
+            # Parse tools for webhook
+            tools = sched.get("tools") or []
+            if isinstance(tools, str):
+                try: tools = json.loads(tools)
+                except Exception: tools = []
+            agent_obj = {
+                "id": sched["agent_id"], "output_type": sched.get("output_type", "chat"),
+                "output_webhook_url": sched.get("output_webhook_url", ""),
+                "output_webhook_secret": sched.get("output_webhook_secret", ""),
+                "api_key": sched.get("api_key", ""), "name": sched.get("name", ""),
+            }
+            db.save_custom_agent_run(
+                agent_id=sched["agent_id"],
+                input_text=q,
+                output_text=answer,
+                sources=result.get("sources", []),
+                confidence=result.get("confidence", ""),
+                input_src="schedule",
+            )
+            _fire_webhook(agent_obj, answer, result, q)
+            results.append({"schedule_id": sched["id"], "status": "ok"})
+        except Exception as ex:
+            results.append({"schedule_id": sched["id"], "status": "error", "error": str(ex)})
+
+    return jsonify({"ran": len(due), "results": results})
+
+
 @app.route("/agent-marketplace")
 @login_required
 def agent_marketplace():
@@ -1313,12 +1676,10 @@ def agent_marketplace():
                 a["tools"] = json.loads(a["tools"])
             except Exception:
                 a["tools"] = []
-    investors = db.list_investor_sessions()
     return render_template("agent_marketplace.html",
                            agents=agents,
                            categories=categories,
                            selected_category=category,
-                           investors=investors,
                            user=_current_user())
 
 
@@ -1331,8 +1692,6 @@ def agent_marketplace_assign(agent_id):
         return redirect(url_for("agent_marketplace"))
     user = _current_user()
     db.assign_agent_to_investor(agent_id, investor_session_id, user["id"])
-    agent = db.get_marketplace_agent(agent_id)
-    flash(f"Agent '{agent['name']}' assigned successfully.", "success")
     return redirect(url_for("agent_marketplace"))
 
 
@@ -1343,6 +1702,26 @@ def agent_marketplace_unassign(agent_id):
     if investor_session_id:
         db.unassign_agent_from_investor(agent_id, investor_session_id)
     return redirect(request.referrer or url_for("agent_marketplace"))
+
+
+@app.route("/investors/<int:session_id>/assign-agent", methods=["POST"])
+@login_required
+def investor_assign_agent(session_id):
+    selected_ids = set(int(x) for x in request.form.getlist("agent_ids") if x.isdigit())
+    current_ids = db.get_investor_agent_ids(session_id)
+    user_id = _current_user()["id"]
+    for aid in selected_ids - current_ids:
+        db.assign_agent_to_investor(aid, session_id, user_id)
+    for aid in current_ids - selected_ids:
+        db.unassign_agent_from_investor(aid, session_id)
+    return redirect(url_for("investor_detail", session_id=session_id))
+
+
+@app.route("/investors/<int:session_id>/unassign-agent/<int:agent_id>", methods=["POST"])
+@login_required
+def investor_unassign_agent(session_id, agent_id):
+    db.unassign_agent_from_investor(agent_id, session_id)
+    return redirect(url_for("investor_detail", session_id=session_id))
 
 
 @app.route("/investor/agents")
@@ -1362,21 +1741,42 @@ def investor_agents():
 
 
 @app.route("/investor/agents/<int:agent_id>/chat")
+@app.route("/investor/agents/<int:agent_id>/chat/<int:conv_id>")
 @investor_login_required
-def investor_agent_chat(agent_id):
+def investor_agent_chat(agent_id, conv_id=None):
     inv = _current_investor()
     sid = inv.get("session_id")
     agent = db.get_marketplace_agent(agent_id)
     if not agent:
         flash("Agent not found.", "error")
         return redirect(url_for("investor_agents"))
-    # Verify agent is assigned to this investor
     assigned_ids = db.get_investor_agent_ids(sid)
     if agent_id not in assigned_ids:
         flash("This agent is not assigned to you.", "error")
         return redirect(url_for("investor_agents"))
+    if isinstance(agent.get("tools"), str):
+        try: agent["tools"] = json.loads(agent["tools"])
+        except Exception: agent["tools"] = []
     investor = db.get_investor_session(sid)
-    return render_template("investor_agent_chat.html", agent=agent, investor=investor)
+
+    # Create a new conversation if none provided
+    if not conv_id:
+        conv_id = db.create_conversation(
+            created_by=inv["id"],
+            investor_session_id=sid,
+            title=f"{agent['name']} Session",
+        )
+        return redirect(url_for("investor_agent_chat", agent_id=agent_id, conv_id=conv_id))
+
+    # Verify conversation belongs to this investor
+    conv = db.get_conversation(conv_id)
+    if not conv or conv.get("investor_session_id") != sid:
+        return redirect(url_for("investor_agent_chat", agent_id=agent_id))
+
+    messages = db.get_messages(conv_id)
+    return render_template("investor_agent_chat.html",
+                           agent=agent, investor=investor,
+                           conv_id=conv_id, messages=messages)
 
 
 if __name__ == "__main__":

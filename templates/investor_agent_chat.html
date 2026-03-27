@@ -4,17 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ agent.name }} · Investor Portal</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0f172a; color: #e2e8f0; font-family: system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
+    body { background: #0f172a; color: #e2e8f0; font-family: system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
     .agent-header {
       background: #1e293b; border-bottom: 1px solid #334155;
       padding: .85rem 1.5rem; display: flex; align-items: center; gap: 1rem;
+      flex-shrink: 0;
     }
-    .agent-header-back {
-      color: #64748b; text-decoration: none; font-size: .85rem; white-space: nowrap;
-    }
+    .agent-header-back { color: #64748b; text-decoration: none; font-size: .85rem; white-space: nowrap; }
     .agent-header-back:hover { color: #94a3b8; }
     .agent-header-icon { font-size: 1.6rem; line-height: 1; }
     .agent-header-info { flex: 1; }
@@ -38,6 +38,40 @@
     }
     .msg.user .msg-avatar { background: #1d4ed8; border-color: #1d4ed8; font-size: .8rem; color: #fff; }
 
+    /* Thinking / research panel */
+    .research-panel {
+      background: #0f1a2e; border: 1px solid #1e3a5f; border-radius: 12px;
+      overflow: hidden; max-width: 820px; margin-left: calc(32px + .75rem);
+    }
+    .research-header {
+      padding: .55rem 1rem; background: #0d1e38; border-bottom: 1px solid #1e3a5f;
+      display: flex; align-items: center; gap: .5rem; cursor: pointer; user-select: none;
+    }
+    .research-header-label {
+      font-size: .75rem; font-weight: 600; color: #60a5fa; flex: 1; letter-spacing: .04em;
+    }
+    .research-toggle { font-size: .7rem; color: #475569; transition: transform .2s; }
+    .research-toggle.collapsed { transform: rotate(-90deg); }
+    .research-steps { padding: .5rem 0; }
+    .research-step {
+      display: flex; align-items: flex-start; gap: .6rem;
+      padding: .35rem 1rem; font-size: .78rem; line-height: 1.5;
+      animation: step-in .2s ease;
+    }
+    @keyframes step-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .research-step-icon { font-size: .9rem; flex-shrink: 0; margin-top: .05rem; }
+    .research-step-text { color: #94a3b8; }
+    .research-step-text a { color: #60a5fa; text-decoration: none; }
+    .research-step-text a:hover { text-decoration: underline; }
+    .research-step.active .research-step-text { color: #cbd5e1; }
+    .research-step.done .research-step-text { color: #64748b; }
+    .step-pulse {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: #3b82f6; margin-left: 4px; vertical-align: middle;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+
     .typing-dots span {
       display: inline-block; width: 6px; height: 6px; border-radius: 50%;
       background: #64748b; margin: 0 2px; animation: dot-blink 1.2s infinite;
@@ -49,6 +83,7 @@
     .chat-footer {
       background: #1e293b; border-top: 1px solid #334155;
       padding: 1rem 1.5rem; display: flex; gap: .75rem; align-items: flex-end;
+      flex-shrink: 0;
     }
     .chat-input {
       flex: 1; background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
@@ -76,6 +111,32 @@
       font-size: .72rem; padding: .2rem .55rem; border-radius: 4px;
       background: #0f172a; color: #60a5fa; border: 1px solid #1e3a5f;
     }
+
+    .msg-chart {
+      margin-top: .85rem; background: #0f172a; border: 1px solid #1e3a5f;
+      border-radius: 10px; padding: .75rem; position: relative;
+    }
+    .msg-chart-title {
+      font-size: .75rem; font-weight: 600; color: #94a3b8;
+      text-align: center; margin-bottom: .6rem;
+    }
+    .msg-chart canvas { max-height: 260px; }
+
+    .msg-sources {
+      margin-top: .65rem; padding-top: .55rem; border-top: 1px solid #334155;
+      display: flex; flex-wrap: wrap; align-items: center; gap: .35rem;
+    }
+    .msg-sources-label {
+      font-size: .68rem; font-weight: 600; color: #475569;
+      text-transform: uppercase; letter-spacing: .06em; margin-right: .2rem;
+    }
+    .msg-sources a, .msg-sources span {
+      font-size: .72rem; padding: .15rem .5rem; border-radius: 4px;
+      background: #0f172a; border: 1px solid #1e3a5f;
+    }
+    .msg-sources a { color: #60a5fa; text-decoration: none; }
+    .msg-sources a:hover { background: #1e3a5f; }
+    .msg-sources span { color: #64748b; }
   </style>
 </head>
 <body>
@@ -102,13 +163,22 @@
     </div>
   </div>
 
-  <div class="msg assistant" id="welcomeMsg">
+  {% if messages %}
+    {% for msg in messages %}
+    <div class="msg {{ msg.role }}">
+      <div class="msg-avatar">{{ agent.icon if msg.role == 'assistant' else investor.investor_name[0] | upper }}</div>
+      <div class="msg-bubble">{{ msg.content | replace('\n', '<br>') | safe }}</div>
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="msg assistant">
     <div class="msg-avatar">{{ agent.icon }}</div>
     <div class="msg-bubble">
       Hello! I'm your <strong>{{ agent.name }}</strong>. I'm here to help you with {{ agent.category | lower }} questions related to your fund due diligence.<br><br>
       What would you like to know?
     </div>
   </div>
+  {% endif %}
 </div>
 
 <!-- Input -->
@@ -129,6 +199,8 @@
   const INVESTOR_SESSION_ID = {{ investor.id }};
   const AGENT_CATEGORY = {{ agent.category | tojson }};
   const AGENT_DESC = {{ agent.description | tojson }};
+  const CONV_ID = {{ conv_id }};
+  const AGENT_ID = {{ agent.id }};
 
   const chatArea = document.getElementById('chatArea');
   const chatInput = document.getElementById('chatInput');
@@ -139,6 +211,9 @@
     chatInput.style.height = 'auto';
     chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + 'px';
   });
+
+  // Scroll to bottom on load
+  chatArea.scrollTop = chatArea.scrollHeight;
 
   // Send on Enter (Shift+Enter for newline)
   chatInput.addEventListener('keydown', e => {
@@ -161,6 +236,92 @@
     return bubble;
   }
 
+  // --- Research panel ---
+  let researchPanel = null;
+  let researchSteps = null;
+  let activeStep = null;
+
+  function createResearchPanel() {
+    const panel = document.createElement('div');
+    panel.className = 'research-panel';
+    panel.id = 'researchPanel';
+    panel.innerHTML = `
+      <div class="research-header" onclick="toggleResearch(this)">
+        <span class="research-step-icon">🔬</span>
+        <span class="research-header-label">Research in progress…</span>
+        <span class="research-toggle">▼</span>
+      </div>
+      <div class="research-steps" id="researchSteps"></div>`;
+    chatArea.appendChild(panel);
+    chatArea.scrollTop = chatArea.scrollHeight;
+    researchPanel = panel;
+    researchSteps = panel.querySelector('#researchSteps');
+    activeStep = null;
+    return panel;
+  }
+
+  function toggleResearch(header) {
+    const steps = header.nextElementSibling;
+    const toggle = header.querySelector('.research-toggle');
+    const collapsed = steps.style.display === 'none';
+    steps.style.display = collapsed ? '' : 'none';
+    toggle.classList.toggle('collapsed', !collapsed);
+  }
+
+  function addResearchStep(icon, text, url) {
+    if (!researchSteps) return;
+    // Mark previous active as done
+    if (activeStep) {
+      activeStep.classList.remove('active');
+      activeStep.classList.add('done');
+      const pulse = activeStep.querySelector('.step-pulse');
+      if (pulse) pulse.remove();
+    }
+    const step = document.createElement('div');
+    step.className = 'research-step active';
+    let textHtml = escapeHtml(text);
+    if (url) {
+      const domain = (() => { try { return new URL(url).hostname; } catch(e) { return url; } })();
+      textHtml += ` <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(domain)}</a>`;
+    }
+    step.innerHTML = `<span class="research-step-icon">${icon}</span><span class="research-step-text">${textHtml}<span class="step-pulse"></span></span>`;
+    researchSteps.appendChild(step);
+    activeStep = step;
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+
+  function finalizeResearch(label) {
+    if (!researchPanel) return;
+    if (activeStep) {
+      activeStep.classList.remove('active');
+      activeStep.classList.add('done');
+      const pulse = activeStep.querySelector('.step-pulse');
+      if (pulse) pulse.remove();
+    }
+    const hdr = researchPanel.querySelector('.research-header-label');
+    if (hdr) hdr.textContent = label || 'Research complete';
+    const hdrIcon = researchPanel.querySelector('.research-header .research-step-icon');
+    if (hdrIcon) hdrIcon.textContent = '✅';
+    // Collapse the panel after a short delay
+    setTimeout(() => {
+      const header = researchPanel.querySelector('.research-header');
+      if (header) {
+        const steps = header.nextElementSibling;
+        const toggle = header.querySelector('.research-toggle');
+        steps.style.display = 'none';
+        toggle.classList.add('collapsed');
+      }
+    }, 1200);
+  }
+
+  function removeResearchPanel() {
+    if (researchPanel) { researchPanel.remove(); researchPanel = null; researchSteps = null; activeStep = null; }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
   function appendTyping() {
     const div = document.createElement('div');
     div.className = 'msg assistant';
@@ -176,7 +337,6 @@
     if (el) el.remove();
   }
 
-  // Build an agent-aware system context for the Q&A stream
   async function sendMessage() {
     const q = chatInput.value.trim();
     if (!q) return;
@@ -190,47 +350,180 @@
     // Prefix question with agent context so the DDQ agent knows which persona to use
     const contextualQ = `[${AGENT_NAME} — ${AGENT_CATEGORY}]: ${q}`;
 
-    // Create a conversation for this agent session (reuse existing investor chat stream)
     try {
-      // Create conversation
-      const createRes = await fetch('/investor/chat/new', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `title=${encodeURIComponent(AGENT_NAME + ': ' + q.slice(0, 60))}`
-      });
-      const createData = await createRes.json();
-      const convId = createData.conversation_id;
-
       removeTyping();
+      createResearchPanel();
       const bubble = appendMsg('assistant', '');
       let fullText = '';
+      let stepCount = 0;
 
-      const es = new EventSource(`/investor/chat/${convId}/stream?q=${encodeURIComponent(contextualQ)}`);
+      const es = new EventSource(`/investor/chat/${CONV_ID}/stream?q=${encodeURIComponent(contextualQ)}&agent_id=${AGENT_ID}`);
+
       es.onmessage = e => {
-        const data = JSON.parse(e.data);
-        if (data.type === 'token') {
+        let data;
+        try { data = JSON.parse(e.data); } catch { return; }
+
+        if (data.type === 'thinking') {
+          addResearchStep(data.icon || '💭', data.text || '', data.url || null);
+          stepCount++;
+
+        } else if (data.type === 'tool_call') {
+          // tool_call events: show what tool + query
+          const icon = data.tool === 'web_search' ? '🔍'
+                      : data.tool === 'browse_url' ? '🌐'
+                      : data.tool === 'search_fund_documents' ? '📄'
+                      : data.tool === 'list_available_documents' ? '📋'
+                      : '⚙️';
+          const label = data.query
+            ? `${toolLabel(data.tool)}: ${data.query}`
+            : toolLabel(data.tool);
+          addResearchStep(icon, label, data.url || null);
+          stepCount++;
+
+        } else if (data.type === 'sources_found') {
+          const src = data.sources && data.sources.length
+            ? `Found ${data.sources.length} source${data.sources.length > 1 ? 's' : ''}: ${data.sources.slice(0,3).join(', ')}`
+            : 'No sources found';
+          addResearchStep('✅', src);
+
+        } else if (data.type === 'token') {
+          // First token — finalize research panel
+          if (fullText === '') {
+            finalizeResearch(stepCount > 0 ? `Researched ${stepCount} step${stepCount > 1 ? 's' : ''}` : 'Research complete');
+          }
           fullText += data.text;
           bubble.innerHTML = fullText.replace(/\n/g, '<br>');
           chatArea.scrollTop = chatArea.scrollHeight;
+
         } else if (data.type === 'result') {
+          if (fullText === '') finalizeResearch('Research complete');
+          // Render chart if present
+          if (data.data && data.data.chart_data) {
+            renderChart(bubble, data.data.chart_data);
+          }
+          // Append source links if present
+          if (data.data && data.data.sources && data.data.sources.length) {
+            const srcs = data.data.sources.filter(s => s.doc_name);
+            if (srcs.length) {
+              const linksHtml = srcs.map(s => {
+                const isUrl = s.doc_name.startsWith('http');
+                const label = isUrl
+                  ? (() => { try { return new URL(s.doc_name).hostname; } catch(e) { return s.doc_name; } })()
+                  : s.doc_name + (s.section && s.section !== 'N/A' ? ' · ' + s.section : '');
+                return isUrl
+                  ? `<a href="${escapeHtml(s.doc_name)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`
+                  : `<span>${escapeHtml(label)}</span>`;
+              }).join('');
+              bubble.innerHTML += `<div class="msg-sources"><span class="msg-sources-label">Sources</span>${linksHtml}</div>`;
+            }
+          }
           es.close();
           sendBtn.disabled = false;
+
         } else if (data.type === 'error') {
+          removeResearchPanel();
           es.close();
-          bubble.innerHTML = '<em style="color:#ef4444">Error: ' + (data.message || 'Unknown error') + '</em>';
+          bubble.innerHTML = '<em style="color:#ef4444">Error: ' + escapeHtml(data.message || 'Unknown error') + '</em>';
           sendBtn.disabled = false;
         }
       };
+
       es.onerror = () => {
         es.close();
-        if (!fullText) bubble.innerHTML = '<em style="color:#ef4444">Connection error. Please try again.</em>';
+        if (!fullText) {
+          removeResearchPanel();
+          bubble.innerHTML = '<em style="color:#ef4444">Connection error. Please try again.</em>';
+        }
         sendBtn.disabled = false;
       };
+
     } catch (err) {
       removeTyping();
+      removeResearchPanel();
       appendMsg('assistant', 'Sorry, something went wrong. Please try again.');
       sendBtn.disabled = false;
     }
+  }
+
+  function renderChart(bubble, cd) {
+    if (!cd || !cd.labels || !cd.datasets) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'msg-chart';
+    if (cd.title) {
+      const title = document.createElement('div');
+      title.className = 'msg-chart-title';
+      title.textContent = cd.title;
+      wrap.appendChild(title);
+    }
+    const canvas = document.createElement('canvas');
+    wrap.appendChild(canvas);
+    bubble.appendChild(wrap);
+
+    const isDark = true;
+    const gridColor = 'rgba(255,255,255,0.07)';
+    const textColor = '#94a3b8';
+    const palette = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899'];
+
+    const datasets = cd.datasets.map((ds, i) => ({
+      label: ds.label || '',
+      data: ds.data,
+      backgroundColor: cd.type === 'pie'
+        ? palette
+        : palette[i % palette.length] + 'cc',
+      borderColor: cd.type === 'line' ? palette[i % palette.length] : 'transparent',
+      borderWidth: cd.type === 'line' ? 2 : 0,
+      fill: cd.type === 'line' ? false : undefined,
+      tension: 0.3,
+      pointRadius: 4,
+      pointBackgroundColor: palette[i % palette.length],
+    }));
+
+    const unit = cd.unit || '';
+    new Chart(canvas, {
+      type: cd.type || 'bar',
+      data: { labels: cd.labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: {
+            labels: { color: textColor, font: { size: 11 }, boxWidth: 12 }
+          },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const val = ctx.parsed.y !== undefined ? ctx.parsed.y : ctx.parsed;
+                return ` ${ctx.dataset.label || ''}: ${val.toLocaleString()}${unit ? ' ' + unit : ''}`;
+              }
+            }
+          }
+        },
+        scales: cd.type === 'pie' ? {} : {
+          x: {
+            ticks: { color: textColor, font: { size: 10 } },
+            grid: { color: gridColor }
+          },
+          y: {
+            ticks: {
+              color: textColor, font: { size: 10 },
+              callback: v => v.toLocaleString() + (unit ? ' ' + unit : '')
+            },
+            grid: { color: gridColor }
+          }
+        }
+      }
+    });
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+
+  function toolLabel(tool) {
+    const labels = {
+      web_search: 'Searching the web',
+      browse_url: 'Reading page',
+      search_fund_documents: 'Searching fund documents',
+      list_available_documents: 'Listing available documents',
+    };
+    return labels[tool] || tool;
   }
 </script>
 </body>

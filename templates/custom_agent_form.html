@@ -1,0 +1,695 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if agent else 'New' }} Custom Agent{% endblock %}
+{% block content %}
+<style>
+.caf-layout { display:grid; grid-template-columns:1fr 380px; gap:1.5rem; align-items:start; }
+@media(max-width:900px){ .caf-layout { grid-template-columns:1fr; } }
+.caf-card { background:var(--white); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:1.5rem; }
+.caf-section { margin-bottom:1.25rem; }
+.caf-label { font-size:.8rem; font-weight:600; color:var(--navy); margin-bottom:.4rem; display:block; }
+.caf-sub { font-size:.75rem; color:var(--muted); margin-top:.2rem; }
+.caf-input, .caf-select, .caf-textarea {
+  width:100%; padding:.65rem .85rem; border:1px solid var(--border); border-radius:6px;
+  font-size:.88rem; font-family:inherit; background:var(--white); color:var(--text);
+  transition:border-color .15s; outline:none;
+}
+.caf-input:focus, .caf-select:focus, .caf-textarea:focus { border-color:var(--navy); }
+.caf-textarea { min-height:120px; resize:vertical; }
+.caf-prompt { min-height:180px; font-family:monospace; font-size:.82rem; }
+.caf-row { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+.caf-tools { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.5rem; }
+.caf-tool-cb { display:none; }
+.caf-tool-lbl {
+  padding:.3rem .75rem; border-radius:5px; font-size:.78rem; font-weight:500; cursor:pointer;
+  background:var(--bg2); border:1px solid var(--border); color:var(--muted); transition:all .15s;
+  user-select:none;
+}
+.caf-tool-cb:checked + .caf-tool-lbl { background:#eef3ff; color:var(--accent); border-color:#c7d7fa; }
+
+.caf-io-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+.caf-io-opt { border:2px solid var(--border); border-radius:8px; padding:.85rem 1rem; cursor:pointer; transition:all .15s; }
+.caf-io-opt:has(input:checked) { border-color:var(--navy); background:#f0f4ff; }
+.caf-io-opt label { cursor:pointer; display:flex; flex-direction:column; gap:.2rem; }
+.caf-io-title { font-size:.85rem; font-weight:600; color:var(--navy); }
+.caf-io-desc { font-size:.75rem; color:var(--muted); }
+.caf-io-opt input { display:none; }
+
+.caf-apikey-box {
+  background:#f8fafc; border:1px solid var(--border); border-radius:8px;
+  padding:1rem; display:flex; flex-direction:column; gap:.5rem;
+}
+.caf-apikey-val {
+  font-family:monospace; font-size:.8rem; color:var(--navy); word-break:break-all;
+  background:var(--bg2); border:1px solid var(--border); border-radius:4px; padding:.5rem .75rem;
+  cursor:pointer;
+}
+.caf-runs { display:flex; flex-direction:column; gap:.5rem; margin-top:.5rem; max-height:320px; overflow-y:auto; }
+.caf-run {
+  background:var(--bg2); border:1px solid var(--border); border-radius:6px; padding:.65rem .85rem;
+  font-size:.78rem;
+}
+.caf-run-q { color:var(--text); font-weight:500; margin-bottom:.25rem; }
+.caf-run-a { color:var(--muted); line-height:1.5; }
+.caf-run-meta { font-size:.7rem; color:var(--muted); margin-top:.35rem; display:flex; gap:.5rem; }
+.caf-run-badge { padding:.1rem .4rem; border-radius:3px; font-weight:600; }
+.badge-api  { background:#fef3c7; color:#92400e; }
+.badge-chat { background:#e0f2fe; color:#0369a1; }
+.badge-high { background:#dcfce7; color:#166534; }
+.badge-medium { background:#fef9c3; color:#854d0e; }
+.badge-low { background:#fee2e2; color:#991b1b; }
+
+.endpoint-box {
+  background:#0f172a; border-radius:8px; padding:.85rem 1rem;
+  font-family:monospace; font-size:.78rem; color:#94a3b8; line-height:1.8;
+}
+.endpoint-method { color:#f59e0b; font-weight:700; }
+.endpoint-url { color:#60a5fa; }
+.endpoint-key { color:#a78bfa; }
+.endpoint-val { color:#6ee7b7; }
+
+.sched-row { background:var(--bg2); border:1px solid var(--border); border-radius:6px; padding:.6rem .75rem; }
+.sched-toggle-btn {
+  font-size:.7rem; font-weight:600; padding:.2rem .55rem; border-radius:4px; cursor:pointer; border:1px solid transparent;
+}
+.sched-active { background:#dcfce7; color:#166534; border-color:#bbf7d0; }
+.sched-paused { background:#fef3c7; color:#92400e; border-color:#fde68a; }
+.sched-del-btn {
+  font-size:.75rem; padding:.2rem .45rem; border-radius:4px; cursor:pointer;
+  background:var(--bg2); border:1px solid var(--border); color:var(--muted);
+}
+.sched-del-btn:hover { background:#fee2e2; color:#dc2626; border-color:#fca5a5; }
+
+.caf-help-btn {
+  font-size:.72rem; font-weight:600; padding:.2rem .6rem; border-radius:5px;
+  border:1px solid var(--border); background:var(--bg2); color:var(--accent);
+  cursor:pointer; transition:all .15s;
+}
+.caf-help-btn:hover { background:#eef3ff; border-color:#c7d7fa; }
+.caf-help-box {
+  background:#f8fafc; border:1px solid #dde4f0; border-radius:8px;
+  padding:.85rem 1rem; margin-bottom:.65rem; font-size:.8rem; color:var(--text); line-height:1.6;
+}
+.caf-help-title { font-weight:700; color:var(--navy); font-size:.78rem; margin-bottom:.3rem; }
+.caf-help-pre {
+  background:#0f172a; color:#94a3b8; border-radius:6px; padding:.65rem .85rem;
+  font-family:monospace; font-size:.75rem; line-height:1.7; white-space:pre-wrap;
+  margin-top:.35rem; margin-bottom:0;
+}
+</style>
+
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <h1 class="page-title">{{ 'Edit Agent' if agent else 'Create Custom Agent' }}</h1>
+    <div class="page-sub">Configure input source, processing instructions, and output destination</div>
+  </div>
+  <a href="{{ url_for('custom_agents') }}" class="btn btn-outline">← Back</a>
+</div>
+
+<form method="POST">
+<div class="caf-layout">
+  <!-- Left: config -->
+  <div>
+    <!-- Basic info -->
+    <div class="caf-card" style="margin-bottom:1.25rem;">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:1rem;">Agent Identity</h3>
+      <div class="caf-row">
+        <div class="caf-section">
+          <label class="caf-label">Icon (emoji)</label>
+          <input class="caf-input" name="icon" value="{{ agent.icon if agent else '🤖' }}" maxlength="4" style="width:80px;text-align:center;font-size:1.5rem;">
+        </div>
+        <div class="caf-section" style="flex:1;">
+          <label class="caf-label">Agent Name *</label>
+          <input class="caf-input" name="name" required value="{{ agent.name if agent else '' }}" placeholder="e.g. Sales Intelligence Agent">
+        </div>
+      </div>
+      <div class="caf-section">
+        <label class="caf-label">Description</label>
+        <input class="caf-input" name="description" value="{{ agent.description if agent else '' }}" placeholder="What does this agent do?">
+      </div>
+      <div class="caf-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem;">
+          <label class="caf-label" style="margin-bottom:0;">System Prompt / Instructions</label>
+          <button type="button" class="caf-help-btn" onclick="toggleHelp('sysprompt-help')">? Help</button>
+        </div>
+        <div class="caf-help-box" id="sysprompt-help" style="display:none;">
+          <div class="caf-help-title">What is the System Prompt?</div>
+          <p>Defines the agent's <strong>role, persona, and rules</strong>. It is sent before every conversation — the LLM always follows these instructions.</p>
+          <div class="caf-help-title" style="margin-top:.65rem;">Example — Financial Analyst Agent</div>
+          <pre class="caf-help-pre">You are a senior financial analyst specializing in venture capital and private equity.
+
+Your job is to:
+- Analyze financial data, metrics, and market trends
+- Provide clear, data-driven insights
+- Always cite sources when referencing market data
+- Present numbers in a structured format
+
+Tone: professional, concise, and objective.
+Never speculate without clearly labeling it as an estimate.</pre>
+          <div class="caf-help-title" style="margin-top:.65rem;">Example — Customer Support Agent</div>
+          <pre class="caf-help-pre">You are a helpful customer support agent for Acme Corp.
+Answer questions about products, pricing, and policies.
+Always be polite and empathetic.
+If you don't know the answer, say "I'll escalate this to our team."</pre>
+        </div>
+        <textarea class="caf-textarea caf-prompt" name="system_prompt" placeholder="Example:
+
+You are a senior financial analyst specializing in venture capital.
+
+Your responsibilities:
+- Analyze fund performance, portfolio metrics, and market trends
+- Provide concise, data-driven insights with clear structure
+- Always cite sources when referencing external data
+- Use professional tone — avoid speculation
+
+Rules:
+- Never fabricate data or statistics
+- If unsure, say so clearly and suggest next steps">{{ agent.system_prompt if agent else '' }}</textarea>
+        <div class="caf-sub">Defines the agent's <strong>role, tone, and constraints</strong>. Applied to every conversation. Click <em>? Help</em> above for examples.</div>
+      </div>
+
+      <div class="caf-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem;">
+          <label class="caf-label" style="margin-bottom:0;">User Prompt Template <span style="font-weight:400;color:var(--muted);">(optional)</span></label>
+          <button type="button" class="caf-help-btn" onclick="toggleHelp('userprompt-help')">? Help</button>
+        </div>
+        <div class="caf-help-box" id="userprompt-help" style="display:none;">
+          <div class="caf-help-title">What is the User Prompt Template?</div>
+          <p>A template that <strong>wraps the user's input</strong> before it is sent to the LLM. Use <code>&#123;&#123;input&#125;&#125;</code> as the placeholder — it is replaced with whatever the user types or sends via API.</p>
+          <p style="margin-top:.4rem;">Leave blank to pass the user's input directly without any wrapping.</p>
+          <div class="caf-help-title" style="margin-top:.65rem;">Example — Structured Analysis</div>
+          <pre class="caf-help-pre">Analyze the following and provide a structured report:
+
+{{input}}
+
+Your response must include:
+1. Executive Summary (2–3 sentences)
+2. Key Metrics & Data Points
+3. Risks or Concerns
+4. Recommended Next Steps</pre>
+          <div class="caf-help-title" style="margin-top:.65rem;">Example — API Data Processing</div>
+          <pre class="caf-help-pre">The following raw data was received from an external system:
+
+{{input}}
+
+Extract and return a JSON object with:
+- summary: one sentence description
+- sentiment: positive / neutral / negative
+- action_required: true or false
+- priority: high / medium / low</pre>
+        </div>
+        <textarea class="caf-textarea caf-prompt" name="user_prompt" placeholder="Example:
+
+Analyze the following and provide a structured report:
+
+{{input}}
+
+Your response must include:
+1. Executive Summary (2–3 sentences)
+2. Key Metrics & Data Points
+3. Risks or Concerns
+4. Recommended Next Steps
+
+— Leave blank to pass user input directly without any wrapping —">{{ agent.user_prompt if agent else '' }}</textarea>
+        <div class="caf-sub">Wraps the user's message before sending to the LLM. Use <code style="background:var(--bg2);padding:.1rem .3rem;border-radius:3px;">&#123;&#123;input&#125;&#125;</code> where the input should appear. Click <em>? Help</em> above for examples.</div>
+      </div>
+    </div>
+
+    <!-- Input type -->
+    <div class="caf-card" style="margin-bottom:1.25rem;">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:1rem;">📥 Input Source</h3>
+      <div class="caf-io-grid">
+        <div class="caf-io-opt">
+          <label>
+            <input type="radio" name="input_type" value="chat" {{ 'checked' if not agent or agent.input_type == 'chat' }}>
+            <span class="caf-io-title">💬 Chat</span>
+            <span class="caf-io-desc">Users interact via a chat interface in the browser</span>
+          </label>
+        </div>
+        <div class="caf-io-opt">
+          <label>
+            <input type="radio" name="input_type" value="api" {{ 'checked' if agent and agent.input_type == 'api' }}>
+            <span class="caf-io-title">🔌 API</span>
+            <span class="caf-io-desc">Receive input via POST request to the API endpoint</span>
+          </label>
+        </div>
+        <div class="caf-io-opt" style="grid-column:span 2;">
+          <label>
+            <input type="radio" name="input_type" value="both" {{ 'checked' if agent and agent.input_type == 'both' }}>
+            <span class="caf-io-title">⚡ Both</span>
+            <span class="caf-io-desc">Accept input from chat interface AND API endpoint simultaneously</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Output type -->
+    <div class="caf-card" style="margin-bottom:1.25rem;">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:1rem;">📤 Output Destination</h3>
+      <div class="caf-io-grid">
+        <div class="caf-io-opt">
+          <label>
+            <input type="radio" name="output_type" value="chat" {{ 'checked' if not agent or agent.output_type == 'chat' }}>
+            <span class="caf-io-title">💬 Chat</span>
+            <span class="caf-io-desc">Stream the answer back to the chat interface</span>
+          </label>
+        </div>
+        <div class="caf-io-opt">
+          <label>
+            <input type="radio" name="output_type" value="webhook" {{ 'checked' if agent and agent.output_type == 'webhook' }}>
+            <span class="caf-io-title">🌐 Webhook</span>
+            <span class="caf-io-desc">POST the result JSON to an external endpoint</span>
+          </label>
+        </div>
+        <div class="caf-io-opt" style="grid-column:span 2;">
+          <label>
+            <input type="radio" name="output_type" value="both" {{ 'checked' if agent and agent.output_type == 'both' }}>
+            <span class="caf-io-title">⚡ Both</span>
+            <span class="caf-io-desc">Return to chat AND fire webhook simultaneously</span>
+          </label>
+        </div>
+      </div>
+      <div style="margin-top:1rem;" id="webhookSection">
+        <div class="caf-section">
+          <label class="caf-label">Webhook URL</label>
+          <input class="caf-input" name="output_webhook_url" value="{{ agent.output_webhook_url if agent else '' }}" placeholder="https://your-server.com/webhook">
+        </div>
+        <div class="caf-section">
+          <label class="caf-label">Webhook Secret <span style="font-weight:400;color:var(--muted);">(optional — used for HMAC signature)</span></label>
+          <input class="caf-input" name="output_webhook_secret" value="{{ agent.output_webhook_secret if agent else '' }}" placeholder="secret_key">
+        </div>
+      </div>
+    </div>
+
+    <!-- Tools -->
+    <div class="caf-card">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.5rem;">🔧 Enabled Tools</h3>
+      <div class="caf-sub" style="margin-bottom:.75rem;">Select which tools this agent can use during processing</div>
+      <div class="caf-tools">
+        {% for tool in all_tools %}
+        <span>
+          <input class="caf-tool-cb" type="checkbox" name="tools" value="{{ tool }}"
+                 id="tool_{{ loop.index }}"
+                 {{ 'checked' if agent and tool in agent.tools }}>
+          <label class="caf-tool-lbl" for="tool_{{ loop.index }}">{{ tool }}</label>
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: API docs + runs -->
+  <div>
+    {% if agent %}
+    <!-- API Key -->
+    <div class="caf-card" style="margin-bottom:1.25rem;">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.85rem;">🔑 API Key</h3>
+      <div class="caf-apikey-box">
+        <div style="font-size:.75rem;color:var(--muted);">Use this key to call the agent via API</div>
+        <div class="caf-apikey-val" onclick="copyApiKey(this)" title="Click to copy">{{ agent.api_key }}</div>
+        <div style="font-size:.7rem;color:var(--muted);">Click to copy</div>
+      </div>
+    </div>
+
+    <!-- API Usage -->
+    <div class="caf-card" style="margin-bottom:1.25rem;">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.85rem;">📡 API Endpoint</h3>
+      <div class="endpoint-box">
+        <div><span class="endpoint-method">POST</span> <span class="endpoint-url">/api/v1/agents/{{ agent.api_key }}/run</span></div>
+        <div style="margin-top:.5rem;color:#64748b;">Content-Type: application/json</div>
+        <div style="margin-top:.75rem;color:#64748b;">Body:</div>
+        <div>{</div>
+        <div>&nbsp;&nbsp;<span class="endpoint-key">"input"</span>: <span class="endpoint-val">"Your question here"</span></div>
+        <div>}</div>
+        <div style="margin-top:.75rem;color:#64748b;">Response:</div>
+        <div>{</div>
+        <div>&nbsp;&nbsp;<span class="endpoint-key">"output"</span>: <span class="endpoint-val">"Agent answer..."</span>,</div>
+        <div>&nbsp;&nbsp;<span class="endpoint-key">"confidence"</span>: <span class="endpoint-val">"high"</span>,</div>
+        <div>&nbsp;&nbsp;<span class="endpoint-key">"sources"</span>: [...]</div>
+        <div>}</div>
+      </div>
+      <div style="margin-top:.75rem;">
+        <a href="{{ url_for('custom_agent_chat', agent_id=agent.id) }}" class="btn btn-primary" style="width:100%;text-align:center;display:block;">
+          💬 Open Chat Interface
+        </a>
+      </div>
+    </div>
+
+    <!-- Test Agent -->
+    <div class="caf-card" style="margin-bottom:1.25rem;">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.85rem;">🧪 Test Agent</h3>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:.75rem;">Send a test message and see the agent respond in real time using the <em>saved</em> configuration.</div>
+      <div style="display:flex;gap:.5rem;margin-bottom:.65rem;">
+        <textarea id="testInput" rows="2" placeholder="Type a test message…"
+          style="flex:1;padding:.55rem .75rem;border:1px solid var(--border);border-radius:6px;font-size:.83rem;font-family:inherit;resize:none;outline:none;background:var(--bg2);color:var(--text);"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runTest();}"></textarea>
+        <button type="button" class="btn btn-primary" id="testBtn" onclick="runTest()" style="align-self:flex-end;white-space:nowrap;">▶ Run</button>
+      </div>
+      <div id="testOutput" style="display:none;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem;">
+          <span style="font-size:.72rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Response</span>
+          <span id="testMeta" style="font-size:.7rem;color:var(--muted);"></span>
+        </div>
+        <div id="testResult"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:.65rem .85rem;font-size:.82rem;line-height:1.7;color:var(--text);min-height:48px;white-space:pre-wrap;word-break:break-word;"></div>
+        <div id="testThinking" style="margin-top:.5rem;display:none;">
+          <div style="font-size:.72rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem;">Steps</div>
+          <div id="testSteps" style="display:flex;flex-direction:column;gap:.2rem;"></div>
+        </div>
+        <div id="testSources" style="margin-top:.5rem;display:none;">
+          <div style="font-size:.72rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem;">Sources</div>
+          <div id="testSourceLinks" style="display:flex;flex-wrap:wrap;gap:.3rem;font-size:.75rem;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent runs -->
+    {% if runs %}
+    <div class="caf-card">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.75rem;">📋 Recent Runs</h3>
+      <div class="caf-runs">
+        {% for run in runs %}
+        <div class="caf-run">
+          <div class="caf-run-q">{{ run.input_text|truncate(80, True, '…') }}</div>
+          <div class="caf-run-a">{{ run.output_text|truncate(120, True, '…') }}</div>
+          <div class="caf-run-meta">
+            <span class="caf-run-badge {{ 'badge-api' if run.input_src == 'api' else 'badge-chat' }}">{{ run.input_src }}</span>
+            {% if run.confidence %}
+            <span class="caf-run-badge badge-{{ run.confidence }}">{{ run.confidence }}</span>
+            {% endif %}
+            <span>{{ run.created_at[:16] if run.created_at else '' }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Scheduler -->
+    <div class="caf-card" style="margin-bottom:1.25rem;">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.85rem;">⏰ Scheduled Tasks</h3>
+
+      <!-- Existing schedules -->
+      <div id="scheduleList" style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:.85rem;">
+        {% if schedules %}
+          {% for s in schedules %}
+          <div class="sched-row" id="sched-{{ s.id }}">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem;">
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:.82rem;font-weight:600;color:var(--navy);">{{ s.name }}</div>
+                <div style="font-size:.74rem;color:var(--muted);margin-top:.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ s.input_text }}">{{ s.input_text[:60] }}{% if s.input_text|length > 60 %}…{% endif %}</div>
+                <div style="font-size:.7rem;color:var(--muted);margin-top:.2rem;display:flex;gap:.5rem;flex-wrap:wrap;">
+                  {% if s.schedule_type == 'interval' %}
+                  <span>🔄 Every {{ s.interval_minutes }}min</span>
+                  {% elif s.schedule_type == 'daily' %}
+                  <span>📅 Daily at {{ s.daily_time }}</span>
+                  {% elif s.schedule_type == 'weekly' %}
+                  {% set days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+                  <span>📅 Weekly {{ days[s.weekly_day % 7] }} {{ s.daily_time }}</span>
+                  {% endif %}
+                  <span>▶ {{ s.run_count or 0 }} runs</span>
+                  {% if s.last_run_at %}<span>Last: {{ s.last_run_at[:16] }}</span>{% endif %}
+                  {% if s.next_run_at %}<span>Next: {{ s.next_run_at[:16] }}</span>{% endif %}
+                </div>
+              </div>
+              <div style="display:flex;gap:.35rem;flex-shrink:0;align-items:center;">
+                <button type="button" class="sched-toggle-btn {{ 'sched-active' if s.is_active else 'sched-paused' }}"
+                        onclick="toggleSchedule({{ s.id }}, this)" title="{{ 'Pause' if s.is_active else 'Resume' }}">
+                  {{ '▶ Active' if s.is_active else '⏸ Paused' }}
+                </button>
+                <button type="button" class="sched-del-btn" onclick="deleteSchedule({{ s.id }}, this)" title="Delete">✕</button>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div id="noSchedules" style="font-size:.8rem;color:var(--muted);text-align:center;padding:.5rem 0;">No scheduled tasks yet.</div>
+        {% endif %}
+      </div>
+
+      <!-- Add schedule form -->
+      <details id="addSchedDetails" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <summary style="padding:.55rem .85rem;font-size:.8rem;font-weight:600;color:var(--navy);cursor:pointer;background:var(--bg2);list-style:none;display:flex;align-items:center;gap:.4rem;">
+          <span>+</span> Add Scheduled Task
+        </summary>
+        <div style="padding:.85rem;display:flex;flex-direction:column;gap:.65rem;">
+          <div>
+            <label class="caf-label">Task Name</label>
+            <input class="caf-input" id="schedName" placeholder="e.g. Daily Market Report">
+          </div>
+          <div>
+            <label class="caf-label">Input / Question</label>
+            <textarea class="caf-textarea" id="schedInput" rows="3" placeholder="What should the agent run? e.g. Summarize today's top VC funding news"></textarea>
+          </div>
+          <div>
+            <label class="caf-label">Frequency</label>
+            <select class="caf-select" id="schedType" onchange="updateSchedFields()">
+              <option value="interval">Every X minutes</option>
+              <option value="daily">Daily at specific time</option>
+              <option value="weekly">Weekly on specific day</option>
+            </select>
+          </div>
+          <div id="schedIntervalField">
+            <label class="caf-label">Interval (minutes)</label>
+            <select class="caf-select" id="schedInterval">
+              <option value="5">Every 5 minutes</option>
+              <option value="15">Every 15 minutes</option>
+              <option value="30">Every 30 minutes</option>
+              <option value="60" selected>Every 1 hour</option>
+              <option value="120">Every 2 hours</option>
+              <option value="360">Every 6 hours</option>
+              <option value="720">Every 12 hours</option>
+              <option value="1440">Every 24 hours</option>
+            </select>
+          </div>
+          <div id="schedTimeField" style="display:none;">
+            <label class="caf-label">Time (UTC)</label>
+            <input class="caf-input" id="schedTime" type="time" value="09:00">
+          </div>
+          <div id="schedDayField" style="display:none;">
+            <label class="caf-label">Day of Week</label>
+            <select class="caf-select" id="schedDay">
+              <option value="0">Monday</option>
+              <option value="1">Tuesday</option>
+              <option value="2">Wednesday</option>
+              <option value="3">Thursday</option>
+              <option value="4">Friday</option>
+              <option value="5">Saturday</option>
+              <option value="6">Sunday</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-primary" onclick="saveSchedule()" style="width:100%;">+ Add Task</button>
+        </div>
+      </details>
+    </div>
+
+    <!-- Delete -->
+    <div style="margin-top:1rem;">
+      <button type="submit" name="action" value="delete"
+              class="btn btn-danger" style="width:100%;"
+              onclick="return confirm('Delete this agent? This cannot be undone.')">
+        🗑 Delete Agent
+      </button>
+    </div>
+    {% else %}
+    <div class="caf-card">
+      <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.75rem;">ℹ️ How it works</h3>
+      <div style="font-size:.83rem;color:var(--muted);line-height:1.7;">
+        <p style="margin-bottom:.75rem;"><strong style="color:var(--navy);">1. Configure</strong> — Set the agent's name, instructions, input source, and output destination.</p>
+        <p style="margin-bottom:.75rem;"><strong style="color:var(--navy);">2. Get API key</strong> — An API key is auto-generated. Use it to send input via REST API.</p>
+        <p style="margin-bottom:.75rem;"><strong style="color:var(--navy);">3. Process</strong> — The agent uses your system prompt + tools to answer questions.</p>
+        <p><strong style="color:var(--navy);">4. Output</strong> — Response streams to chat and/or is POSTed to your webhook URL as JSON.</p>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div style="margin-top:1.5rem;display:flex;gap:1rem;">
+  <button type="submit" class="btn btn-primary">{{ 'Save Changes' if agent else 'Create Agent' }}</button>
+  <a href="{{ url_for('custom_agents') }}" class="btn btn-outline">Cancel</a>
+</div>
+</form>
+
+<script>
+function toggleHelp(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+{% if agent %}
+const TEST_AGENT_ID = {{ agent.id }};
+let testEs = null;
+
+function runTest() {
+  const q = document.getElementById('testInput').value.trim();
+  if (!q) return;
+  const btn = document.getElementById('testBtn');
+  const result = document.getElementById('testResult');
+  const output = document.getElementById('testOutput');
+  const meta = document.getElementById('testMeta');
+  const thinking = document.getElementById('testThinking');
+  const steps = document.getElementById('testSteps');
+  const sources = document.getElementById('testSources');
+  const sourceLinks = document.getElementById('testSourceLinks');
+
+  if (testEs) { testEs.close(); testEs = null; }
+
+  btn.disabled = true; btn.textContent = '⏳ Running…';
+  result.textContent = ''; output.style.display = 'block';
+  meta.textContent = ''; thinking.style.display = 'none';
+  steps.innerHTML = ''; sources.style.display = 'none'; sourceLinks.innerHTML = '';
+
+  const start = Date.now();
+  let fullText = '', stepCount = 0;
+
+  testEs = new EventSource(`/custom-agents/${TEST_AGENT_ID}/stream?q=${encodeURIComponent(q)}`);
+  testEs.onmessage = e => {
+    let data; try { data = JSON.parse(e.data); } catch { return; }
+
+    if (data.type === 'thinking') {
+      thinking.style.display = 'block';
+      const s = document.createElement('div');
+      s.style.cssText = 'font-size:.75rem;color:#64748b;padding:.1rem 0;display:flex;gap:.4rem;align-items:flex-start;';
+      s.innerHTML = `<span>${data.icon||'💭'}</span><span>${escTest(data.text||'')}${data.url ? ` <a href="${escTest(data.url)}" target="_blank" style="color:var(--accent);font-size:.7rem;">${escTest((() => { try { return new URL(data.url).hostname; } catch(e){ return data.url; } })())}</a>` : ''}</span>`;
+      steps.appendChild(s);
+      stepCount++;
+    } else if (data.type === 'token') {
+      fullText += data.text;
+      result.textContent = fullText;
+    } else if (data.type === 'result') {
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      meta.textContent = `${elapsed}s · ${stepCount} step${stepCount !== 1 ? 's' : ''}${data.data && data.data.confidence ? ' · ' + data.data.confidence : ''}`;
+      if (data.data && data.data.sources && data.data.sources.length) {
+        const srcs = data.data.sources.filter(s => s.doc_name);
+        if (srcs.length) {
+          sources.style.display = 'block';
+          srcs.forEach(s => {
+            const isUrl = s.doc_name.startsWith('http');
+            const el = document.createElement(isUrl ? 'a' : 'span');
+            el.style.cssText = 'padding:.15rem .5rem;border-radius:4px;background:var(--bg2);border:1px solid var(--border);';
+            if (isUrl) { el.href = s.doc_name; el.target = '_blank'; el.style.color = 'var(--accent)'; }
+            try { el.textContent = isUrl ? new URL(s.doc_name).hostname : s.doc_name; } catch(e) { el.textContent = s.doc_name; }
+            sourceLinks.appendChild(el);
+          });
+        }
+      }
+      testEs.close(); testEs = null;
+      btn.disabled = false; btn.textContent = '▶ Run';
+    } else if (data.type === 'error') {
+      result.innerHTML = `<em style="color:#dc3545">Error: ${escTest(data.message||'Unknown error')}</em>`;
+      testEs.close(); testEs = null;
+      btn.disabled = false; btn.textContent = '▶ Run';
+    }
+  };
+  testEs.onerror = () => {
+    if (!fullText) result.innerHTML = '<em style="color:#dc3545">Connection error. Please try again.</em>';
+    if (testEs) { testEs.close(); testEs = null; }
+    btn.disabled = false; btn.textContent = '▶ Run';
+  };
+}
+
+function escTest(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+{% endif %}
+
+// ── Scheduler ──
+function updateSchedFields() {
+  const t = document.getElementById('schedType').value;
+  document.getElementById('schedIntervalField').style.display = t === 'interval' ? '' : 'none';
+  document.getElementById('schedTimeField').style.display = t !== 'interval' ? '' : 'none';
+  document.getElementById('schedDayField').style.display = t === 'weekly' ? '' : 'none';
+}
+
+async function saveSchedule() {
+  const name = document.getElementById('schedName').value.trim();
+  const input_text = document.getElementById('schedInput').value.trim();
+  const schedule_type = document.getElementById('schedType').value;
+  if (!input_text) { alert('Please enter an input/question for the task.'); return; }
+
+  const payload = {
+    name: name || 'Scheduled Run',
+    input_text,
+    schedule_type,
+    interval_minutes: parseInt(document.getElementById('schedInterval').value) || 60,
+    daily_time: document.getElementById('schedTime').value || '09:00',
+    weekly_day: parseInt(document.getElementById('schedDay').value) || 1,
+  };
+
+  const res = await fetch(`/custom-agents/{{ agent.id }}/schedules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (data.error) { alert('Error: ' + data.error); return; }
+
+  // Remove "no schedules" placeholder
+  const noEl = document.getElementById('noSchedules');
+  if (noEl) noEl.remove();
+
+  // Build frequency label
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  let freqLabel = '';
+  if (schedule_type === 'interval') freqLabel = `🔄 Every ${payload.interval_minutes}min`;
+  else if (schedule_type === 'daily') freqLabel = `📅 Daily at ${payload.daily_time}`;
+  else freqLabel = `📅 Weekly ${days[payload.weekly_day % 7]} ${payload.daily_time}`;
+
+  const nextRun = data.next_run_at ? data.next_run_at.slice(0,16) : '';
+
+  const row = document.createElement('div');
+  row.className = 'sched-row'; row.id = `sched-${data.id}`;
+  row.innerHTML = `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem;">
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:.82rem;font-weight:600;color:var(--navy);">${escHtml(data.name)}</div>
+      <div style="font-size:.74rem;color:var(--muted);margin-top:.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(data.input_text)}">${escHtml((data.input_text||'').slice(0,60))}${(data.input_text||'').length>60?'…':''}</div>
+      <div style="font-size:.7rem;color:var(--muted);margin-top:.2rem;display:flex;gap:.5rem;flex-wrap:wrap;">
+        <span>${freqLabel}</span><span>▶ 0 runs</span>${nextRun?`<span>Next: ${escHtml(nextRun)}</span>`:''}
+      </div>
+    </div>
+    <div style="display:flex;gap:.35rem;flex-shrink:0;align-items:center;">
+      <button type="button" class="sched-toggle-btn sched-active" onclick="toggleSchedule(${data.id},this)">▶ Active</button>
+      <button type="button" class="sched-del-btn" onclick="deleteSchedule(${data.id},this)">✕</button>
+    </div>
+  </div>`;
+  document.getElementById('scheduleList').prepend(row);
+
+  // Reset form
+  document.getElementById('schedName').value = '';
+  document.getElementById('schedInput').value = '';
+  document.getElementById('addSchedDetails').removeAttribute('open');
+}
+
+async function toggleSchedule(id, btn) {
+  const res = await fetch(`/custom-agents/{{ agent.id }}/schedules/${id}/toggle`, { method: 'POST' });
+  if (!res.ok) return;
+  const isActive = btn.classList.contains('sched-active');
+  btn.classList.toggle('sched-active', !isActive);
+  btn.classList.toggle('sched-paused', isActive);
+  btn.textContent = isActive ? '⏸ Paused' : '▶ Active';
+}
+
+async function deleteSchedule(id, btn) {
+  if (!confirm('Delete this scheduled task?')) return;
+  const res = await fetch(`/custom-agents/{{ agent.id }}/schedules/${id}`, { method: 'DELETE' });
+  if (!res.ok) return;
+  const row = document.getElementById(`sched-${id}`);
+  if (row) row.remove();
+  if (!document.querySelector('.sched-row')) {
+    const list = document.getElementById('scheduleList');
+    list.innerHTML = '<div id="noSchedules" style="font-size:.8rem;color:var(--muted);text-align:center;padding:.5rem 0;">No scheduled tasks yet.</div>';
+  }
+}
+
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function copyApiKey(el) {
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    const orig = el.textContent;
+    el.textContent = '✓ Copied!';
+    setTimeout(() => el.textContent = orig, 1500);
+  });
+}
+</script>
+{% endblock %}
