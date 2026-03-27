@@ -47,6 +47,11 @@ def investor_login_required(f):
     def decorated(*args, **kwargs):
         if "investor_user_id" not in session:
             return redirect(url_for("investor_login"))
+        # Validate that the session's investor_session_id still exists in DB
+        sid = session.get("investor_session_id")
+        if sid and not db.get_investor_session(sid):
+            session.clear()
+            return redirect(url_for("investor_login"))
         return f(*args, **kwargs)
     return decorated
 
@@ -70,6 +75,33 @@ def _current_user() -> dict:
         "email": session.get("user_email"),
         "role": session.get("user_role"),
     }
+
+
+def _parse_qa_text(text: str) -> list[dict]:
+    """Parse Q:/A: formatted text into list of {question, answer} dicts.
+    Supports blocks separated by blank lines with Q: and A: prefixes,
+    or numbered like '1. Q: ...' style.
+    """
+    import re
+    entries = []
+    # Normalize: split on double newlines to get blocks
+    blocks = re.split(r'\n{2,}', text.strip())
+    for block in blocks:
+        lines = [l.strip() for l in block.strip().splitlines() if l.strip()]
+        q, a = "", ""
+        for line in lines:
+            lc = line.lower()
+            if lc.startswith("q:") or re.match(r'^\d+[\.\)]\s*q:', lc):
+                q = re.sub(r'^(\d+[\.\)]\s*)?q:\s*', '', line, flags=re.IGNORECASE).strip()
+            elif lc.startswith("a:") or re.match(r'^\d+[\.\)]\s*a:', lc):
+                a = re.sub(r'^(\d+[\.\)]\s*)?a:\s*', '', line, flags=re.IGNORECASE).strip()
+            elif q and not a:
+                q += " " + line  # continuation of question
+            elif a:
+                a += " " + line  # continuation of answer
+        if q and a:
+            entries.append({"question": q, "answer": a})
+    return entries
 
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
@@ -777,6 +809,44 @@ def investor_logout():
     return redirect(url_for("investor_login"))
 
 
+# ── Investor: My Answers (session-scoped Q&A) ─────────────────────────────────
+
+@app.route("/investor/my-answers")
+@investor_login_required
+def investor_my_answers():
+    inv = _current_investor()
+    answers = db.list_session_answers(inv["session_id"])
+    return render_template("investor_my_answers.html", answers=answers)
+
+@app.route("/investor/my-answers/add", methods=["POST"])
+@investor_login_required
+def investor_add_answer():
+    inv = _current_investor()
+    question = request.form.get("question", "").strip()
+    answer = request.form.get("answer", "").strip()
+    if question and answer:
+        db.add_session_answer(inv["session_id"], question, answer)
+    return redirect(url_for("investor_my_answers"))
+
+@app.route("/investor/my-answers/bulk", methods=["POST"])
+@investor_login_required
+def investor_bulk_answers():
+    """Parse bulk paste: sections separated by blank lines, Q: and A: prefixes."""
+    inv = _current_investor()
+    raw = request.form.get("bulk_text", "")
+    entries = _parse_qa_text(raw)
+    for e in entries:
+        db.add_session_answer(inv["session_id"], e["question"], e["answer"])
+    return redirect(url_for("investor_my_answers"))
+
+@app.route("/investor/my-answers/<int:answer_id>/delete", methods=["POST"])
+@investor_login_required
+def investor_delete_answer(answer_id):
+    inv = _current_investor()
+    db.delete_session_answer(answer_id, inv["session_id"])
+    return redirect(url_for("investor_my_answers"))
+
+
 @app.route("/investor/portal")
 @investor_login_required
 def investor_portal():
@@ -1128,6 +1198,16 @@ def kb_edit(entry_id):
 def kb_delete(entry_id):
     db.delete_kb_entry(entry_id)
     flash("Entry deleted.", "success")
+    return redirect(url_for("knowledge_base"))
+
+
+@app.route("/admin/kb/bulk-import", methods=["POST"])
+@login_required
+def kb_bulk_import():
+    raw = request.form.get("bulk_text", "")
+    entries = _parse_qa_text(raw)
+    count = db.bulk_import_kb(entries, _current_user()["id"])
+    flash(f"Imported {count} entries into the Knowledge Base.", "success")
     return redirect(url_for("knowledge_base"))
 
 

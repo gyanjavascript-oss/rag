@@ -1,272 +1,467 @@
 """
-SQLite database schema and query helpers for the DDQ Platform.
+PostgreSQL database schema and query helpers for the DDQ Platform.
 """
-import sqlite3
+import psycopg2
+import psycopg2.pool
+import psycopg2.extras
 import hashlib
 import json
 import os
-from datetime import datetime
+import re
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "ddq_platform.db")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://ddquser:ddq_secure_2026@localhost/ddqplatform"
+)
+
+# Force PostgreSQL date/timestamp columns to return as ISO strings
+# so Jinja templates can do things like value[:10] safely.
+def _pg_dt_to_str(value, cur):
+    return None if value is None else str(value)
+
+_DT_TYPE = psycopg2.extensions.new_type(
+    (1082, 1114, 1184),   # date, timestamp, timestamptz OIDs
+    'DT_AS_STR', _pg_dt_to_str
+)
+psycopg2.extensions.register_type(_DT_TYPE)
+
+_pool = None
+
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        _pool = psycopg2.pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
+    return _pool
+
+
+class _ConnWrapper:
+    """Thin wrapper so app.py can call conn.execute() like SQLite,
+    while also passing through psycopg2 cursor() calls for database.py internals."""
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=None):
+        """SQLite-compatible execute: auto-replaces ? with %s."""
+        sql = sql.replace("?", "%s")
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql, params or ())
+        return _CurWrapper(cur)
+
+    def cursor(self, cursor_factory=None):
+        """Pass through for database.py internal use.
+        Default is plain cursor (for scalar queries); pass RealDictCursor explicitly for row dicts."""
+        if cursor_factory:
+            return self._conn.cursor(cursor_factory=cursor_factory)
+        return self._conn.cursor()
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        put_db(self._conn)
+
+
+class _CurWrapper:
+    def __init__(self, cur):
+        self._cur = cur
+
+    def fetchone(self):
+        row = self._cur.fetchone()
+        return _row(dict(row)) if row else None
+
+    def fetchall(self):
+        return [_row(dict(r)) for r in self._cur.fetchall()]
+
+    def __iter__(self):
+        return iter(self.fetchall())
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    conn = _get_pool().getconn()
+    return _ConnWrapper(conn)
+
+
+def put_db(conn):
+    # Accept both raw psycopg2 conn and _ConnWrapper
+    if isinstance(conn, _ConnWrapper):
+        _get_pool().putconn(conn._conn)
+    else:
+        _get_pool().putconn(conn)
+
+
+def _row(d: dict) -> dict:
+    """Convert datetime objects to ISO strings so templates can do [:10] slicing."""
+    import datetime
+    return {
+        k: v.isoformat() if isinstance(v, (datetime.datetime, datetime.date)) else v
+        for k, v in d.items()
+    }
 
 
 def init_db():
     conn = get_db()
-    c = conn.cursor()
+    try:
+        cur = conn.cursor()
 
-    c.executescript("""
-        -- Users (internal team members)
-        CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            email         TEXT UNIQUE NOT NULL,
-            name          TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            role          TEXT NOT NULL DEFAULT 'analyst',
-            created_at    TEXT DEFAULT (datetime('now'))
-        );
+        # Users
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id            SERIAL PRIMARY KEY,
+                email         TEXT UNIQUE NOT NULL,
+                name          TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'analyst',
+                created_at    TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
-        -- Fund documents (LPA, presentations, policies, memos, etc.)
-        CREATE TABLE IF NOT EXISTS fund_documents (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            name          TEXT NOT NULL,
-            doc_type      TEXT NOT NULL DEFAULT 'other',
-            filepath      TEXT,
-            content       TEXT,
-            status        TEXT DEFAULT 'active',
-            uploaded_by   INTEGER,
-            uploaded_at   TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (uploaded_by) REFERENCES users(id)
-        );
+        # Fund documents
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fund_documents (
+                id          SERIAL PRIMARY KEY,
+                name        TEXT NOT NULL,
+                doc_type    TEXT NOT NULL DEFAULT 'other',
+                filepath    TEXT,
+                content     TEXT,
+                status      TEXT DEFAULT 'active',
+                uploaded_by INTEGER,
+                uploaded_at TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (uploaded_by) REFERENCES users(id)
+            )
+        """)
 
-        -- Document chunks for retrieval
-        CREATE TABLE IF NOT EXISTS document_chunks (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            document_id   INTEGER NOT NULL,
-            chunk_text    TEXT NOT NULL,
-            chunk_index   INTEGER NOT NULL,
-            page_ref      TEXT,
-            section_ref   TEXT,
-            FOREIGN KEY (document_id) REFERENCES fund_documents(id) ON DELETE CASCADE
-        );
+        # Document chunks
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS document_chunks (
+                id            SERIAL PRIMARY KEY,
+                document_id   INTEGER NOT NULL,
+                chunk_text    TEXT NOT NULL,
+                chunk_index   INTEGER NOT NULL,
+                page_ref      TEXT,
+                section_ref   TEXT,
+                search_vector tsvector,
+                FOREIGN KEY (document_id) REFERENCES fund_documents(id) ON DELETE CASCADE
+            )
+        """)
 
-        -- FTS index over document chunks
-        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-            chunk_text,
-            content='document_chunks',
-            content_rowid='id',
-            tokenize='porter ascii'
-        );
+        # Investor sessions
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS investor_sessions (
+                id              SERIAL PRIMARY KEY,
+                investor_name   TEXT NOT NULL,
+                investor_entity TEXT,
+                created_by      INTEGER,
+                notes           TEXT,
+                created_at      TIMESTAMP DEFAULT NOW(),
+                profile_text    TEXT DEFAULT '',
+                profile_generated_at TEXT DEFAULT '',
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            )
+        """)
 
-        -- Investor sessions (one per investor/prospect)
-        CREATE TABLE IF NOT EXISTS investor_sessions (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            investor_name   TEXT NOT NULL,
-            investor_entity TEXT,
-            created_by      INTEGER,
-            notes           TEXT,
-            created_at      TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (created_by) REFERENCES users(id)
-        );
+        # Investor documents
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS investor_documents (
+                id                  SERIAL PRIMARY KEY,
+                investor_session_id INTEGER NOT NULL,
+                name                TEXT NOT NULL,
+                filepath            TEXT,
+                doc_type            TEXT DEFAULT 'other',
+                content             TEXT,
+                uploaded_at         TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE
+            )
+        """)
 
-        -- Investor-specific uploaded documents
-        CREATE TABLE IF NOT EXISTS investor_documents (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            investor_session_id INTEGER NOT NULL,
-            name                TEXT NOT NULL,
-            filepath            TEXT,
-            doc_type            TEXT DEFAULT 'other',
-            content             TEXT,
-            uploaded_at         TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE
-        );
+        # Investor doc chunks
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS investor_doc_chunks (
+                id              SERIAL PRIMARY KEY,
+                investor_doc_id INTEGER NOT NULL,
+                chunk_text      TEXT NOT NULL,
+                chunk_index     INTEGER NOT NULL,
+                search_vector   tsvector,
+                FOREIGN KEY (investor_doc_id) REFERENCES investor_documents(id) ON DELETE CASCADE
+            )
+        """)
 
-        -- Investor document chunks
-        CREATE TABLE IF NOT EXISTS investor_doc_chunks (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            investor_doc_id INTEGER NOT NULL,
-            chunk_text      TEXT NOT NULL,
-            chunk_index     INTEGER NOT NULL,
-            FOREIGN KEY (investor_doc_id) REFERENCES investor_documents(id) ON DELETE CASCADE
-        );
+        # Conversations
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id                  SERIAL PRIMARY KEY,
+                title               TEXT,
+                investor_session_id INTEGER,
+                created_by          INTEGER,
+                status              TEXT DEFAULT 'active',
+                created_at          TIMESTAMP DEFAULT NOW(),
+                updated_at          TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id),
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            )
+        """)
 
-        -- FTS index for investor doc chunks
-        CREATE VIRTUAL TABLE IF NOT EXISTS inv_chunks_fts USING fts5(
-            chunk_text,
-            content='investor_doc_chunks',
-            content_rowid='id',
-            tokenize='porter ascii'
-        );
+        # Messages
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id              SERIAL PRIMARY KEY,
+                conversation_id INTEGER NOT NULL,
+                role            TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                sources         TEXT,
+                draft_response  TEXT,
+                themes          TEXT,
+                created_at      TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            )
+        """)
 
-        -- Conversations (a thread of Q&A, optionally linked to an investor session)
-        CREATE TABLE IF NOT EXISTS conversations (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            title               TEXT,
-            investor_session_id INTEGER,
-            created_by          INTEGER,
-            created_at          TEXT DEFAULT (datetime('now')),
-            updated_at          TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id),
-            FOREIGN KEY (created_by) REFERENCES users(id)
-        );
+        # Question themes
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS question_themes (
+                id         SERIAL PRIMARY KEY,
+                message_id INTEGER NOT NULL,
+                theme      TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            )
+        """)
 
-        -- Individual messages in a conversation
-        CREATE TABLE IF NOT EXISTS messages (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id INTEGER NOT NULL,
-            role            TEXT NOT NULL,
-            content         TEXT NOT NULL,
-            sources         TEXT,
-            draft_response  TEXT,
-            themes          TEXT,
-            created_at      TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-        );
+        # Handover requests
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS handover_requests (
+                id                  SERIAL PRIMARY KEY,
+                conversation_id     INTEGER NOT NULL,
+                investor_session_id INTEGER,
+                reason              TEXT,
+                status              TEXT DEFAULT 'pending',
+                requested_at        TIMESTAMP DEFAULT NOW(),
+                claimed_by          INTEGER,
+                claimed_at          TIMESTAMP,
+                resolved_at         TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id),
+                FOREIGN KEY (claimed_by) REFERENCES users(id)
+            )
+        """)
 
-        -- Extracted themes for analytics
-        CREATE TABLE IF NOT EXISTS question_themes (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id  INTEGER NOT NULL,
-            theme       TEXT NOT NULL,
-            created_at  TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-        );
+        # Document assignments
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS document_assignments (
+                id                  SERIAL PRIMARY KEY,
+                investor_session_id INTEGER NOT NULL,
+                document_id         INTEGER NOT NULL,
+                assigned_by         INTEGER,
+                assigned_at         TIMESTAMP DEFAULT NOW(),
+                UNIQUE(investor_session_id, document_id),
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (document_id) REFERENCES fund_documents(id) ON DELETE CASCADE,
+                FOREIGN KEY (assigned_by) REFERENCES users(id)
+            )
+        """)
 
-        -- Human agent handover requests
-        CREATE TABLE IF NOT EXISTS handover_requests (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id     INTEGER NOT NULL,
-            investor_session_id INTEGER,
-            reason              TEXT,
-            status              TEXT DEFAULT 'pending',
-            requested_at        TEXT DEFAULT (datetime('now')),
-            claimed_by          INTEGER,
-            claimed_at          TEXT,
-            resolved_at         TEXT,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id),
-            FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id),
-            FOREIGN KEY (claimed_by) REFERENCES users(id)
-        );
+        # Knowledge base
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_base (
+                id            SERIAL PRIMARY KEY,
+                question      TEXT NOT NULL,
+                answer        TEXT NOT NULL,
+                tags          TEXT,
+                created_by    INTEGER,
+                created_at    TIMESTAMP DEFAULT NOW(),
+                updated_at    TIMESTAMP DEFAULT NOW(),
+                search_vector tsvector,
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            )
+        """)
 
-        -- Fund documents assigned to investor sessions (investor portal access control)
-        CREATE TABLE IF NOT EXISTS document_assignments (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            investor_session_id INTEGER NOT NULL,
-            document_id         INTEGER NOT NULL,
-            assigned_by         INTEGER,
-            assigned_at         TEXT DEFAULT (datetime('now')),
-            UNIQUE(investor_session_id, document_id),
-            FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE,
-            FOREIGN KEY (document_id) REFERENCES fund_documents(id) ON DELETE CASCADE,
-            FOREIGN KEY (assigned_by) REFERENCES users(id)
-        );
+        # Session answers
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS session_answers (
+                id                  SERIAL PRIMARY KEY,
+                investor_session_id INTEGER NOT NULL,
+                question            TEXT NOT NULL,
+                answer              TEXT NOT NULL,
+                created_at          TIMESTAMP DEFAULT NOW(),
+                search_vector       tsvector,
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE
+            )
+        """)
 
-        -- Admin knowledge base: trained Q&A pairs
-        CREATE TABLE IF NOT EXISTS knowledge_base (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            question    TEXT NOT NULL,
-            answer      TEXT NOT NULL,
-            tags        TEXT,
-            created_by  INTEGER,
-            created_at  TEXT DEFAULT (datetime('now')),
-            updated_at  TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (created_by) REFERENCES users(id)
-        );
+        # Roles
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS roles (
+                id          SERIAL PRIMARY KEY,
+                name        TEXT UNIQUE NOT NULL,
+                description TEXT,
+                permissions TEXT NOT NULL DEFAULT '[]',
+                is_system   INTEGER DEFAULT 0,
+                created_at  TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
-        -- FTS5 index for knowledge base search
-        CREATE VIRTUAL TABLE IF NOT EXISTS kb_fts USING fts5(
-            question,
-            answer,
-            content='knowledge_base',
-            content_rowid='id',
-            tokenize='porter ascii'
-        );
-    """)
+        # LLM keys
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS llm_keys (
+                id           SERIAL PRIMARY KEY,
+                name         TEXT NOT NULL,
+                provider     TEXT NOT NULL DEFAULT 'openai',
+                model        TEXT NOT NULL DEFAULT 'gpt-4o',
+                api_key_enc  TEXT NOT NULL,
+                api_key_hint TEXT DEFAULT '',
+                base_url     TEXT DEFAULT '',
+                priority     INTEGER NOT NULL DEFAULT 10,
+                is_active    INTEGER NOT NULL DEFAULT 1,
+                created_at   TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
-    # Roles table for RBAC
-    c.executescript("""
-        CREATE TABLE IF NOT EXISTS roles (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            name        TEXT UNIQUE NOT NULL,
-            description TEXT,
-            permissions TEXT NOT NULL DEFAULT '[]',
-            is_system   INTEGER DEFAULT 0,
-            created_at  TEXT DEFAULT (datetime('now'))
-        );
-    """)
+        # LLM usage
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS llm_usage (
+                id            SERIAL PRIMARY KEY,
+                llm_key_id    INTEGER NOT NULL,
+                provider      TEXT NOT NULL,
+                model         TEXT NOT NULL,
+                input_tokens  INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cost_usd      REAL DEFAULT 0.0,
+                created_at    TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (llm_key_id) REFERENCES llm_keys(id) ON DELETE CASCADE
+            )
+        """)
 
-    # Seed system roles
-    all_perms = '["dashboard","qa_sessions","upload_documents","delete_documents","manage_investors","manage_kb","live_support","team_management","analytics"]'
-    analyst_perms = '["dashboard","qa_sessions","live_support","analytics"]'
-    c.execute("INSERT OR IGNORE INTO roles (name, description, permissions, is_system) VALUES ('admin', 'Full access to all features', ?, 1)", (all_perms,))
-    c.execute("INSERT OR IGNORE INTO roles (name, description, permissions, is_system) VALUES ('analyst', 'View and use core features, no admin actions', ?, 1)", (analyst_perms,))
+        # Migrations for columns added after initial release (IF NOT EXISTS is safe in PG 9.6+)
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS investor_session_id INTEGER REFERENCES investor_sessions(id)")
+        cur.execute("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'")
+        cur.execute("ALTER TABLE llm_keys ADD COLUMN IF NOT EXISTS api_key_hint TEXT DEFAULT ''")
+        cur.execute("ALTER TABLE llm_keys ADD COLUMN IF NOT EXISTS base_url TEXT DEFAULT ''")
+        cur.execute("ALTER TABLE investor_sessions ADD COLUMN IF NOT EXISTS profile_text TEXT DEFAULT ''")
+        cur.execute("ALTER TABLE investor_sessions ADD COLUMN IF NOT EXISTS profile_generated_at TEXT DEFAULT ''")
 
-    # LLM key management tables
-    c.executescript("""
-        CREATE TABLE IF NOT EXISTS llm_keys (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            name         TEXT NOT NULL,
-            provider     TEXT NOT NULL DEFAULT 'openai',
-            model        TEXT NOT NULL DEFAULT 'gpt-4o',
-            api_key_enc  TEXT NOT NULL,
-            api_key_hint TEXT DEFAULT '',
-            priority     INTEGER NOT NULL DEFAULT 10,
-            is_active    INTEGER NOT NULL DEFAULT 1,
-            created_at   TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS llm_usage (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            llm_key_id    INTEGER NOT NULL,
-            provider      TEXT NOT NULL,
-            model         TEXT NOT NULL,
-            input_tokens  INTEGER DEFAULT 0,
-            output_tokens INTEGER DEFAULT 0,
-            cost_usd      REAL DEFAULT 0.0,
-            created_at    TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (llm_key_id) REFERENCES llm_keys(id) ON DELETE CASCADE
-        );
-    """)
+        # ── tsvector triggers ──────────────────────────────────────────────────
 
-    # Migrations for columns added after initial release
-    for migration in [
-        "ALTER TABLE users ADD COLUMN investor_session_id INTEGER REFERENCES investor_sessions(id)",
-        "ALTER TABLE conversations ADD COLUMN status TEXT DEFAULT 'active'",
-        "ALTER TABLE llm_keys ADD COLUMN api_key_hint TEXT DEFAULT ''",
-        "ALTER TABLE llm_keys ADD COLUMN base_url TEXT DEFAULT ''",
-        "ALTER TABLE investor_sessions ADD COLUMN profile_text TEXT DEFAULT ''",
-        "ALTER TABLE investor_sessions ADD COLUMN profile_generated_at TEXT DEFAULT ''",
-    ]:
-        try:
-            c.execute(migration)
-        except Exception:
-            pass
+        # document_chunks
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION update_chunk_search_vector()
+            RETURNS TRIGGER AS $$
+            BEGIN
+              NEW.search_vector := to_tsvector('english', COALESCE(NEW.chunk_text, ''));
+              RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+        """)
+        cur.execute("""
+            DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON document_chunks
+        """)
+        cur.execute("""
+            CREATE TRIGGER chunk_search_vector_trigger
+            BEFORE INSERT OR UPDATE ON document_chunks
+            FOR EACH ROW EXECUTE FUNCTION update_chunk_search_vector()
+        """)
 
-    # Seed sentinel LLM key for env-var usage tracking
-    c.execute("""
-        INSERT OR IGNORE INTO llm_keys (id, name, provider, model, api_key_enc, api_key_hint, priority, is_active)
-        VALUES (1, 'Environment Key (OPENAI_API_KEY)', 'openai', 'gpt-4o', '', 'env', 999, 0)
-    """)
+        # knowledge_base
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION update_kb_search_vector()
+            RETURNS TRIGGER AS $$
+            BEGIN
+              NEW.search_vector := to_tsvector('english',
+                COALESCE(NEW.question, '') || ' ' || COALESCE(NEW.answer, ''));
+              RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+        """)
+        cur.execute("DROP TRIGGER IF EXISTS kb_search_vector_trigger ON knowledge_base")
+        cur.execute("""
+            CREATE TRIGGER kb_search_vector_trigger
+            BEFORE INSERT OR UPDATE ON knowledge_base
+            FOR EACH ROW EXECUTE FUNCTION update_kb_search_vector()
+        """)
 
-    # Seed default admin user
-    admin_hash = _hash("admin123")
-    c.execute("""
-        INSERT OR IGNORE INTO users (email, name, password_hash, role)
-        VALUES (?, ?, ?, 'admin')
-    """, ("admin@fund.com", "Administrator", admin_hash))
+        # session_answers
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION update_session_answers_search_vector()
+            RETURNS TRIGGER AS $$
+            BEGIN
+              NEW.search_vector := to_tsvector('english',
+                COALESCE(NEW.question, '') || ' ' || COALESCE(NEW.answer, ''));
+              RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+        """)
+        cur.execute("DROP TRIGGER IF EXISTS session_answers_search_vector_trigger ON session_answers")
+        cur.execute("""
+            CREATE TRIGGER session_answers_search_vector_trigger
+            BEFORE INSERT OR UPDATE ON session_answers
+            FOR EACH ROW EXECUTE FUNCTION update_session_answers_search_vector()
+        """)
 
-    conn.commit()
-    conn.close()
+        # investor_doc_chunks
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION update_inv_chunk_search_vector()
+            RETURNS TRIGGER AS $$
+            BEGIN
+              NEW.search_vector := to_tsvector('english', COALESCE(NEW.chunk_text, ''));
+              RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+        """)
+        cur.execute("DROP TRIGGER IF EXISTS inv_chunk_search_vector_trigger ON investor_doc_chunks")
+        cur.execute("""
+            CREATE TRIGGER inv_chunk_search_vector_trigger
+            BEFORE INSERT OR UPDATE ON investor_doc_chunks
+            FOR EACH ROW EXECUTE FUNCTION update_inv_chunk_search_vector()
+        """)
+
+        # ── GIN indexes ────────────────────────────────────────────────────────
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_doc_chunks_fts ON document_chunks USING GIN(search_vector)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_kb_fts ON knowledge_base USING GIN(search_vector)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_session_answers_fts ON session_answers USING GIN(search_vector)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_inv_chunks_fts ON investor_doc_chunks USING GIN(search_vector)")
+
+        # ── Seed data ──────────────────────────────────────────────────────────
+
+        all_perms = json.dumps([
+            "dashboard", "qa_sessions", "upload_documents", "delete_documents",
+            "manage_investors", "manage_kb", "live_support", "team_management", "analytics"
+        ])
+        analyst_perms = json.dumps(["dashboard", "qa_sessions", "live_support", "analytics"])
+
+        cur.execute("""
+            INSERT INTO roles (name, description, permissions, is_system)
+            VALUES ('admin', 'Full access to all features', %s, 1)
+            ON CONFLICT (name) DO NOTHING
+        """, (all_perms,))
+        cur.execute("""
+            INSERT INTO roles (name, description, permissions, is_system)
+            VALUES ('analyst', 'View and use core features, no admin actions', %s, 1)
+            ON CONFLICT (name) DO NOTHING
+        """, (analyst_perms,))
+
+        # Sentinel LLM key for env-var usage tracking
+        cur.execute("""
+            INSERT INTO llm_keys (id, name, provider, model, api_key_enc, api_key_hint, priority, is_active)
+            VALUES (1, 'Environment Key (OPENAI_API_KEY)', 'openai', 'gpt-4o', '', 'env', 999, 0)
+            ON CONFLICT (id) DO NOTHING
+        """)
+
+        # Default admin user
+        admin_hash = _hash("admin123")
+        cur.execute("""
+            INSERT INTO users (email, name, password_hash, role)
+            VALUES ('admin@fund.com', 'Administrator', %s, 'admin')
+            ON CONFLICT (email) DO NOTHING
+        """, (admin_hash,))
+
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
-# ── Auth helpers ──────────────────────────────────────────────────────────────
+# ── Auth helpers ───────────────────────────────────────────────────────────────
 
 def _hash(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -274,9 +469,13 @@ def _hash(password: str) -> str:
 
 def get_user_by_email(email: str) -> dict:
     conn = get_db()
-    row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM users WHERE email=%s", (email,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def verify_login(email: str, password: str) -> dict:
@@ -288,863 +487,1180 @@ def verify_login(email: str, password: str) -> dict:
 
 def create_user(email: str, name: str, password: str, role: str = "analyst") -> int:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO users (email, name, password_hash, role)
-        VALUES (?, ?, ?, ?)
-    """, (email, name, _hash(password), role))
-    conn.commit()
-    uid = c.lastrowid
-    conn.close()
-    return uid
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            INSERT INTO users (email, name, password_hash, role)
+            VALUES (%s, %s, %s, %s) RETURNING id
+        """, (email, name, _hash(password), role))
+        uid = cur.fetchone()["id"]
+        conn.commit()
+        return uid
+    finally:
+        put_db(conn)
 
 
 def get_user_by_id(user_id: int) -> dict:
     conn = get_db()
-    row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM users WHERE id=%s", (user_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def update_user_profile(user_id: int, name: str, email: str) -> bool:
     conn = get_db()
     try:
-        conn.execute("UPDATE users SET name=?, email=? WHERE id=?", (name, email, user_id))
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET name=%s, email=%s WHERE id=%s", (name, email, user_id))
         conn.commit()
         return True
     except Exception:
+        conn.rollback()
         return False
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def change_user_password(user_id: int, current_password: str, new_password: str) -> bool:
     conn = get_db()
-    row = conn.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
-    if not row or row["password_hash"] != _hash(current_password):
-        conn.close()
-        return False
-    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (_hash(new_password), user_id))
-    conn.commit()
-    conn.close()
-    return True
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT password_hash FROM users WHERE id=%s", (user_id,))
+        row = cur.fetchone()
+        if not row or row["password_hash"] != _hash(current_password):
+            return False
+        cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (_hash(new_password), user_id))
+        conn.commit()
+        return True
+    finally:
+        put_db(conn)
 
 
-# ── Documents ─────────────────────────────────────────────────────────────────
+# ── Documents ──────────────────────────────────────────────────────────────────
 
-def list_fund_documents() -> list[dict]:
+def list_fund_documents() -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT d.*, u.name as uploaded_by_name
-        FROM fund_documents d
-        LEFT JOIN users u ON d.uploaded_by = u.id
-        WHERE d.status = 'active'
-        ORDER BY d.uploaded_at DESC
-    """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT d.*, u.name as uploaded_by_name
+            FROM fund_documents d
+            LEFT JOIN users u ON d.uploaded_by = u.id
+            WHERE d.status = 'active'
+            ORDER BY d.uploaded_at DESC
+        """)
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def get_fund_document(doc_id: int) -> dict:
     conn = get_db()
-    row = conn.execute("SELECT * FROM fund_documents WHERE id=?", (doc_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM fund_documents WHERE id=%s", (doc_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def delete_fund_document(doc_id: int):
     conn = get_db()
-    conn.execute("UPDATE fund_documents SET status='deleted' WHERE id=?", (doc_id,))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE fund_documents SET status='deleted' WHERE id=%s", (doc_id,))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
-def _fts_query(query: str) -> str:
-    """Build an FTS5 OR query from a natural language string."""
-    stop = {"the","a","an","is","are","was","were","be","been","being","have","has",
-            "had","do","does","did","will","would","could","should","may","might",
-            "of","in","on","at","to","for","with","by","from","about","and","or","not"}
-    words = [w.strip('.,?!;:"()') for w in query.lower().split()]
+def _to_tsquery(query: str) -> str:
+    """Build a PostgreSQL tsquery from a natural language query."""
+    stop = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "of", "in", "on", "at", "to", "for", "with",
+        "by", "from", "about", "and", "or", "not", "what", "how", "when",
+        "where", "who", "which", "why", "can", "your", "our", "my", "tell",
+        "please", "give", "me", "us", "you", "its", "this", "that", "these",
+        "those", "also"
+    }
+    words = re.findall(r"[a-z0-9]+", query.lower())
     terms = [w for w in words if len(w) > 2 and w not in stop]
     if not terms:
-        terms = [query.replace('"', '""')]
-    return " OR ".join(terms)
+        return None
+    return " & ".join(terms)
 
 
-def search_fund_documents(query: str, limit: int = 6) -> list[dict]:
+def search_fund_documents(query: str, limit: int = 6) -> list:
+    tsq = _to_tsquery(query)
     conn = get_db()
     try:
-        fts_q = _fts_query(query)
-        rows = conn.execute("""
-            SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
-                   d.name as doc_name, d.doc_type, d.id as document_id,
-                   bm25(chunks_fts) as score
-            FROM chunks_fts
-            JOIN document_chunks dc ON chunks_fts.rowid = dc.id
-            JOIN fund_documents d ON dc.document_id = d.id
-            WHERE chunks_fts MATCH ? AND d.status = 'active'
-            ORDER BY bm25(chunks_fts)
-            LIMIT ?
-        """, (fts_q, limit)).fetchall()
-    except Exception:
-        rows = conn.execute("""
-            SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
-                   d.name as doc_name, d.doc_type, d.id as document_id,
-                   0 as score
-            FROM document_chunks dc
-            JOIN fund_documents d ON dc.document_id = d.id
-            WHERE dc.chunk_text LIKE ? AND d.status = 'active'
-            LIMIT ?
-        """, (f"%{query}%", limit)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        rows = []
+        if tsq:
+            try:
+                cur.execute("""
+                    SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
+                           d.name as doc_name, d.doc_type, d.id as document_id,
+                           ts_rank(dc.search_vector, to_tsquery('english', %s)) as score
+                    FROM document_chunks dc
+                    JOIN fund_documents d ON dc.document_id = d.id
+                    WHERE dc.search_vector @@ to_tsquery('english', %s)
+                      AND d.status = 'active'
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (tsq, tsq, limit))
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                rows = []
+        if not rows:
+            cur.execute("""
+                SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
+                       d.name as doc_name, d.doc_type, d.id as document_id,
+                       0.0 as score
+                FROM document_chunks dc
+                JOIN fund_documents d ON dc.document_id = d.id
+                WHERE dc.chunk_text ILIKE %s AND d.status = 'active'
+                LIMIT %s
+            """, (f"%{query}%", limit))
+            rows = cur.fetchall()
+        return list(rows)
+    finally:
+        put_db(conn)
 
 
-def search_investor_documents(query: str, investor_session_id: int, limit: int = 4) -> list[dict]:
+def search_investor_documents(query: str, investor_session_id: int, limit: int = 4) -> list:
+    tsq = _to_tsquery(query)
     conn = get_db()
     try:
-        fts_q = _fts_query(query)
-        rows = conn.execute("""
-            SELECT idc.chunk_text, id.name as doc_name, id.doc_type,
-                   bm25(inv_chunks_fts) as score
-            FROM inv_chunks_fts
-            JOIN investor_doc_chunks idc ON inv_chunks_fts.rowid = idc.id
-            JOIN investor_documents id ON idc.investor_doc_id = id.id
-            WHERE inv_chunks_fts MATCH ? AND id.investor_session_id = ?
-            ORDER BY bm25(inv_chunks_fts)
-            LIMIT ?
-        """, (fts_q, investor_session_id, limit)).fetchall()
-    except Exception:
-        rows = conn.execute("""
-            SELECT idc.chunk_text, id.name as doc_name, id.doc_type, 0 as score
-            FROM investor_doc_chunks idc
-            JOIN investor_documents id ON idc.investor_doc_id = id.id
-            WHERE idc.chunk_text LIKE ? AND id.investor_session_id = ?
-            LIMIT ?
-        """, (f"%{query}%", investor_session_id, limit)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        rows = []
+        if tsq:
+            try:
+                cur.execute("""
+                    SELECT idc.chunk_text, id.name as doc_name, id.doc_type,
+                           ts_rank(idc.search_vector, to_tsquery('english', %s)) as score
+                    FROM investor_doc_chunks idc
+                    JOIN investor_documents id ON idc.investor_doc_id = id.id
+                    WHERE idc.search_vector @@ to_tsquery('english', %s)
+                      AND id.investor_session_id = %s
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (tsq, tsq, investor_session_id, limit))
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                rows = []
+        if not rows:
+            cur.execute("""
+                SELECT idc.chunk_text, id.name as doc_name, id.doc_type, 0.0 as score
+                FROM investor_doc_chunks idc
+                JOIN investor_documents id ON idc.investor_doc_id = id.id
+                WHERE idc.chunk_text ILIKE %s AND id.investor_session_id = %s
+                LIMIT %s
+            """, (f"%{query}%", investor_session_id, limit))
+            rows = cur.fetchall()
+        return list(rows)
+    finally:
+        put_db(conn)
 
 
-def find_similar_questions(question: str, limit: int = 3) -> list[dict]:
+def find_similar_questions(question: str, limit: int = 3) -> list:
     """Return previously answered similar questions for context."""
     words = [w for w in question.lower().split() if len(w) > 4][:5]
     if not words:
         return []
     conn = get_db()
-    results = []
-    for word in words:
-        rows = conn.execute("""
-            SELECT m.content as question, m2.content as answer,
-                   m.created_at, c.id as conversation_id
-            FROM messages m
-            JOIN messages m2 ON m2.conversation_id = m.conversation_id
-                             AND m2.role = 'assistant'
-                             AND m2.id = (
-                                SELECT id FROM messages
-                                WHERE conversation_id = m.conversation_id
-                                AND role = 'assistant'
-                                AND id > m.id
-                                LIMIT 1
-                             )
-            JOIN conversations c ON m.conversation_id = c.id
-            WHERE m.role = 'user' AND m.content LIKE ?
-            LIMIT 2
-        """, (f"%{word}%",)).fetchall()
-        for r in rows:
-            d = dict(r)
-            if not any(x["question"] == d["question"] for x in results):
-                results.append(d)
-    conn.close()
-    return results[:limit]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        results = []
+        for word in words:
+            cur.execute("""
+                SELECT m.content as question, m2.content as answer,
+                       m.created_at, c.id as conversation_id
+                FROM messages m
+                JOIN messages m2 ON m2.conversation_id = m.conversation_id
+                                 AND m2.role = 'assistant'
+                                 AND m2.id = (
+                                    SELECT id FROM messages
+                                    WHERE conversation_id = m.conversation_id
+                                    AND role = 'assistant'
+                                    AND id > m.id
+                                    LIMIT 1
+                                 )
+                JOIN conversations c ON m.conversation_id = c.id
+                WHERE m.role = 'user' AND m.content LIKE %s
+                LIMIT 2
+            """, (f"%{word}%",))
+            for r in cur.fetchall():
+                d = dict(r)
+                if not any(x["question"] == d["question"] for x in results):
+                    results.append(d)
+        return results[:limit]
+    finally:
+        put_db(conn)
 
 
-# ── Investor Sessions ─────────────────────────────────────────────────────────
+# ── Investor Sessions ──────────────────────────────────────────────────────────
 
-def list_investor_sessions() -> list[dict]:
+def list_investor_sessions() -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT s.*, u.name as created_by_name,
-               COUNT(DISTINCT id.id) as doc_count,
-               COUNT(DISTINCT c.id) as conversation_count
-        FROM investor_sessions s
-        LEFT JOIN users u ON s.created_by = u.id
-        LEFT JOIN investor_documents id ON id.investor_session_id = s.id
-        LEFT JOIN conversations c ON c.investor_session_id = s.id
-        GROUP BY s.id
-        ORDER BY s.created_at DESC
-    """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT s.id, s.investor_name, s.investor_entity, s.created_by,
+                   s.notes, s.created_at, s.profile_text, s.profile_generated_at,
+                   u.name as created_by_name,
+                   COUNT(DISTINCT da.id) as doc_count,
+                   COUNT(DISTINCT c.id) as conversation_count
+            FROM investor_sessions s
+            LEFT JOIN users u ON s.created_by = u.id
+            LEFT JOIN document_assignments da ON da.investor_session_id = s.id
+            LEFT JOIN conversations c ON c.investor_session_id = s.id
+            GROUP BY s.id, s.investor_name, s.investor_entity, s.created_by,
+                     s.notes, s.created_at, s.profile_text, s.profile_generated_at, u.name
+            ORDER BY s.created_at DESC
+        """)
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def get_investor_session(session_id: int) -> dict:
     conn = get_db()
-    row = conn.execute("""
-        SELECT s.*, u.name as created_by_name
-        FROM investor_sessions s
-        LEFT JOIN users u ON s.created_by = u.id
-        WHERE s.id = ?
-    """, (session_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT s.*, u.name as created_by_name
+            FROM investor_sessions s
+            LEFT JOIN users u ON s.created_by = u.id
+            WHERE s.id = %s
+        """, (session_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def create_investor_session(investor_name: str, investor_entity: str,
                              notes: str, created_by: int) -> int:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO investor_sessions (investor_name, investor_entity, notes, created_by)
-        VALUES (?, ?, ?, ?)
-    """, (investor_name, investor_entity, notes, created_by))
-    conn.commit()
-    sid = c.lastrowid
-    conn.close()
-    return sid
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            INSERT INTO investor_sessions (investor_name, investor_entity, notes, created_by)
+            VALUES (%s, %s, %s, %s) RETURNING id
+        """, (investor_name, investor_entity, notes, created_by))
+        sid = cur.fetchone()["id"]
+        conn.commit()
+        return sid
+    finally:
+        put_db(conn)
 
 
 def get_investor_questions(session_id: int, limit: int = 50) -> list:
     """Return all user questions asked by this investor across all their conversations."""
     conn = get_db()
-    rows = conn.execute("""
-        SELECT m.content, m.themes, m.created_at
-        FROM messages m
-        JOIN conversations c ON m.conversation_id = c.id
-        WHERE c.investor_session_id = ? AND m.role = 'user'
-        ORDER BY m.created_at ASC
-        LIMIT ?
-    """, (session_id, limit)).fetchall()
-    conn.close()
-    result = []
-    for r in rows:
-        d = dict(r)
-        d["themes"] = json.loads(d["themes"]) if d["themes"] else []
-        result.append(d)
-    return result
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT m.content, m.themes, m.created_at
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE c.investor_session_id = %s AND m.role = 'user'
+            ORDER BY m.created_at ASC
+            LIMIT %s
+        """, (session_id, limit))
+        result = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["themes"] = json.loads(d["themes"]) if d["themes"] else []
+            result.append(d)
+        return result
+    finally:
+        put_db(conn)
 
 
 def save_investor_profile(session_id: int, profile_text: str):
     conn = get_db()
-    conn.execute(
-        "UPDATE investor_sessions SET profile_text=?, profile_generated_at=datetime('now') WHERE id=?",
-        (profile_text, session_id)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE investor_sessions SET profile_text=%s, profile_generated_at=NOW() WHERE id=%s",
+            (profile_text, session_id)
+        )
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
-# ── Conversations & Messages ──────────────────────────────────────────────────
+# ── Conversations & Messages ───────────────────────────────────────────────────
 
 def create_conversation(created_by: int, investor_session_id: int = None,
                          title: str = None) -> int:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO conversations (title, investor_session_id, created_by)
-        VALUES (?, ?, ?)
-    """, (title, investor_session_id, created_by))
-    conn.commit()
-    cid = c.lastrowid
-    conn.close()
-    return cid
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            INSERT INTO conversations (title, investor_session_id, created_by)
+            VALUES (%s, %s, %s) RETURNING id
+        """, (title, investor_session_id, created_by))
+        cid = cur.fetchone()["id"]
+        conn.commit()
+        return cid
+    finally:
+        put_db(conn)
 
 
 def get_conversation(conv_id: int) -> dict:
     conn = get_db()
-    row = conn.execute("""
-        SELECT c.*, u.name as created_by_name,
-               s.investor_name, s.investor_entity
-        FROM conversations c
-        LEFT JOIN users u ON c.created_by = u.id
-        LEFT JOIN investor_sessions s ON c.investor_session_id = s.id
-        WHERE c.id = ?
-    """, (conv_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT c.*, u.name as created_by_name,
+                   s.investor_name, s.investor_entity
+            FROM conversations c
+            LEFT JOIN users u ON c.created_by = u.id
+            LEFT JOIN investor_sessions s ON c.investor_session_id = s.id
+            WHERE c.id = %s
+        """, (conv_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
-def list_conversations(user_id: int = None, limit: int = 30) -> list[dict]:
+def list_conversations(user_id: int = None, limit: int = 30) -> list:  # noqa: ARG001
     conn = get_db()
-    query = """
-        SELECT c.id, c.title, c.created_at, c.updated_at,
-               u.name as created_by_name,
-               s.investor_name,
-               COUNT(m.id) as message_count
-        FROM conversations c
-        LEFT JOIN users u ON c.created_by = u.id
-        LEFT JOIN investor_sessions s ON c.investor_session_id = s.id
-        LEFT JOIN messages m ON m.conversation_id = c.id
-        GROUP BY c.id
-        ORDER BY c.updated_at DESC
-        LIMIT ?
-    """
-    rows = conn.execute(query, (limit,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT c.id, c.title, c.created_at, c.updated_at,
+                   u.name as created_by_name,
+                   s.investor_name,
+                   COUNT(m.id) as message_count
+            FROM conversations c
+            LEFT JOIN users u ON c.created_by = u.id
+            LEFT JOIN investor_sessions s ON c.investor_session_id = s.id
+            LEFT JOIN messages m ON m.conversation_id = c.id
+            GROUP BY c.id, c.title, c.created_at, c.updated_at, u.name, s.investor_name
+            ORDER BY c.updated_at DESC
+            LIMIT %s
+        """, (limit,))
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
-def get_messages(conv_id: int) -> list[dict]:
+def get_messages(conv_id: int) -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC
-    """, (conv_id,)).fetchall()
-    conn.close()
-    msgs = []
-    for r in rows:
-        d = dict(r)
-        d["sources"] = json.loads(d["sources"]) if d["sources"] else []
-        d["themes"] = json.loads(d["themes"]) if d["themes"] else []
-        msgs.append(d)
-    return msgs
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT * FROM messages WHERE conversation_id=%s ORDER BY created_at ASC
+        """, (conv_id,))
+        msgs = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["sources"] = json.loads(d["sources"]) if d["sources"] else []
+            d["themes"] = json.loads(d["themes"]) if d["themes"] else []
+            msgs.append(d)
+        return msgs
+    finally:
+        put_db(conn)
 
 
 def add_message(conv_id: int, role: str, content: str,
                 sources: list = None, draft_response: str = None,
                 themes: list = None) -> int:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO messages (conversation_id, role, content, sources, draft_response, themes)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (conv_id, role, content,
-          json.dumps(sources or []),
-          draft_response,
-          json.dumps(themes or [])))
-    conn.execute("UPDATE conversations SET updated_at=datetime('now') WHERE id=?", (conv_id,))
-    msg_id = c.lastrowid
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            INSERT INTO messages (conversation_id, role, content, sources, draft_response, themes)
+            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+        """, (conv_id, role, content,
+              json.dumps(sources or []),
+              draft_response,
+              json.dumps(themes or [])))
+        msg_id = cur.fetchone()["id"]
+        cur.execute("UPDATE conversations SET updated_at=NOW() WHERE id=%s", (conv_id,))
 
-    # Store themes for analytics
-    for theme in (themes or []):
-        c.execute("INSERT INTO question_themes (message_id, theme) VALUES (?, ?)",
-                  (msg_id, theme))
+        # Store themes for analytics
+        for theme in (themes or []):
+            cur.execute("INSERT INTO question_themes (message_id, theme) VALUES (%s, %s)",
+                        (msg_id, theme))
 
-    conn.commit()
-    conn.close()
-    return msg_id
+        conn.commit()
+        return msg_id
+    finally:
+        put_db(conn)
 
 
 def update_conversation_title(conv_id: int, title: str):
     conn = get_db()
-    conn.execute("UPDATE conversations SET title=? WHERE id=?", (title, conv_id))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE conversations SET title=%s WHERE id=%s", (title, conv_id))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
-# ── Analytics ─────────────────────────────────────────────────────────────────
+# ── Analytics ──────────────────────────────────────────────────────────────────
 
 def get_dashboard_stats() -> dict:
     conn = get_db()
-    c = conn.cursor()
-    stats = {
-        "total_questions": c.execute(
-            "SELECT COUNT(*) FROM messages WHERE role='user'").fetchone()[0],
-        "total_conversations": c.execute(
-            "SELECT COUNT(*) FROM conversations").fetchone()[0],
-        "total_documents": c.execute(
-            "SELECT COUNT(*) FROM fund_documents WHERE status='active'").fetchone()[0],
-        "total_investors": c.execute(
-            "SELECT COUNT(*) FROM investor_sessions").fetchone()[0],
-        "total_chunks": c.execute(
-            "SELECT COUNT(*) FROM document_chunks").fetchone()[0],
-    }
-    conn.close()
-    return stats
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM messages WHERE role='user'")
+        total_questions = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM conversations")
+        total_conversations = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM fund_documents WHERE status='active'")
+        total_documents = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM investor_sessions")
+        total_investors = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM document_chunks")
+        total_chunks = cur.fetchone()[0]
+        return {
+            "total_questions": total_questions,
+            "total_conversations": total_conversations,
+            "total_documents": total_documents,
+            "total_investors": total_investors,
+            "total_chunks": total_chunks,
+        }
+    finally:
+        put_db(conn)
 
 
-def get_theme_analytics() -> list[dict]:
+def get_theme_analytics() -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT theme, COUNT(*) as count
-        FROM question_themes
-        GROUP BY theme
-        ORDER BY count DESC
-        LIMIT 20
-    """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT theme, COUNT(*) as count
+            FROM question_themes
+            GROUP BY theme
+            ORDER BY count DESC
+            LIMIT 20
+        """)
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
-def get_document_citation_stats() -> list[dict]:
+def get_document_citation_stats() -> list:
     """Which documents are referenced most in answers."""
     conn = get_db()
-    rows = conn.execute("""
-        SELECT d.name, d.doc_type, COUNT(m.id) as citation_count
-        FROM fund_documents d
-        JOIN document_chunks dc ON dc.document_id = d.id
-        JOIN messages m ON m.sources LIKE '%' || d.name || '%'
-        WHERE d.status = 'active'
-        GROUP BY d.id
-        ORDER BY citation_count DESC
-        LIMIT 10
-    """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT d.name, d.doc_type, COUNT(m.id) as citation_count
+            FROM fund_documents d
+            JOIN document_chunks dc ON dc.document_id = d.id
+            JOIN messages m ON m.sources LIKE '%' || d.name || '%'
+            WHERE d.status = 'active'
+            GROUP BY d.id, d.name, d.doc_type
+            ORDER BY citation_count DESC
+            LIMIT 10
+        """)
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
-def search_assigned_fund_documents(query: str, investor_session_id: int, limit: int = 6) -> list[dict]:
+def search_assigned_fund_documents(query: str, investor_session_id: int, limit: int = 6) -> list:
     """Search only fund documents assigned to this investor session."""
     assigned_ids = get_assigned_document_ids(investor_session_id)
     if not assigned_ids:
         return []
+    tsq = _to_tsquery(query)
     conn = get_db()
-    placeholders = ",".join("?" * len(assigned_ids))
     try:
-        fts_q = _fts_query(query)
-        rows = conn.execute(f"""
-            SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
-                   d.name as doc_name, d.doc_type, d.id as document_id,
-                   bm25(chunks_fts) as score
-            FROM chunks_fts
-            JOIN document_chunks dc ON chunks_fts.rowid = dc.id
-            JOIN fund_documents d ON dc.document_id = d.id
-            WHERE chunks_fts MATCH ? AND d.status = 'active' AND d.id IN ({placeholders})
-            ORDER BY bm25(chunks_fts)
-            LIMIT ?
-        """, [fts_q] + assigned_ids + [limit]).fetchall()
-    except Exception:
-        rows = conn.execute(f"""
-            SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
-                   d.name as doc_name, d.doc_type, d.id as document_id, 0 as score
-            FROM document_chunks dc
-            JOIN fund_documents d ON dc.document_id = d.id
-            WHERE dc.chunk_text LIKE ? AND d.status = 'active' AND d.id IN ({placeholders})
-            LIMIT ?
-        """, [f"%{query}%"] + assigned_ids + [limit]).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        rows = []
+        if tsq:
+            try:
+                cur.execute("""
+                    SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
+                           d.name as doc_name, d.doc_type, d.id as document_id,
+                           ts_rank(dc.search_vector, to_tsquery('english', %s)) as score
+                    FROM document_chunks dc
+                    JOIN fund_documents d ON dc.document_id = d.id
+                    WHERE dc.search_vector @@ to_tsquery('english', %s)
+                      AND d.status = 'active'
+                      AND d.id = ANY(%s::int[])
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (tsq, tsq, assigned_ids, limit))
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                rows = []
+        if not rows:
+            cur.execute("""
+                SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
+                       d.name as doc_name, d.doc_type, d.id as document_id,
+                       0.0 as score
+                FROM document_chunks dc
+                JOIN fund_documents d ON dc.document_id = d.id
+                WHERE dc.chunk_text ILIKE %s AND d.status = 'active'
+                  AND d.id = ANY(%s::int[])
+                LIMIT %s
+            """, (f"%{query}%", assigned_ids, limit))
+            rows = cur.fetchall()
+        return list(rows)
+    finally:
+        put_db(conn)
 
 
 # ── Document Assignments (investor portal) ────────────────────────────────────
 
 def get_assigned_document_ids(investor_session_id: int) -> list:
     conn = get_db()
-    rows = conn.execute(
-        "SELECT document_id FROM document_assignments WHERE investor_session_id=?",
-        (investor_session_id,)
-    ).fetchall()
-    conn.close()
-    return [r[0] for r in rows]
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT document_id FROM document_assignments WHERE investor_session_id=%s",
+            (investor_session_id,)
+        )
+        return [r[0] for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def get_assigned_documents(investor_session_id: int) -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT d.id, d.name, d.doc_type, da.assigned_at
-        FROM document_assignments da
-        JOIN fund_documents d ON da.document_id = d.id
-        WHERE da.investor_session_id = ? AND d.status = 'active'
-        ORDER BY d.name
-    """, (investor_session_id,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT d.id, d.name, d.doc_type, da.assigned_at,
+                   (SELECT dc.chunk_text FROM document_chunks dc
+                    WHERE dc.document_id = d.id
+                    ORDER BY dc.chunk_index LIMIT 1) AS summary_snippet
+            FROM document_assignments da
+            JOIN fund_documents d ON da.document_id = d.id
+            WHERE da.investor_session_id = %s AND d.status = 'active'
+            ORDER BY d.name
+        """, (investor_session_id,))
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def assign_documents_to_investor(investor_session_id: int, doc_ids: list, assigned_by: int):
     """Replace all document assignments for an investor session."""
     conn = get_db()
-    conn.execute("DELETE FROM document_assignments WHERE investor_session_id=?", (investor_session_id,))
-    for doc_id in doc_ids:
-        try:
-            conn.execute("""
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM document_assignments WHERE investor_session_id=%s", (investor_session_id,))
+        for doc_id in doc_ids:
+            cur.execute("""
                 INSERT INTO document_assignments (investor_session_id, document_id, assigned_by)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (investor_session_id, document_id) DO NOTHING
             """, (investor_session_id, doc_id, assigned_by))
-        except Exception:
-            pass
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 # ── Investor User Accounts ────────────────────────────────────────────────────
 
 def create_investor_user(email: str, name: str, password: str, investor_session_id: int) -> int:
     conn = get_db()
-    c = conn.cursor()
-    # Remove any existing investor user for this session
-    conn.execute("DELETE FROM users WHERE investor_session_id=?", (investor_session_id,))
-    c.execute("""
-        INSERT INTO users (email, name, password_hash, role, investor_session_id)
-        VALUES (?, ?, ?, 'investor', ?)
-    """, (email, name, _hash(password), investor_session_id))
-    conn.commit()
-    uid = c.lastrowid
-    conn.close()
-    return uid
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # Remove any existing investor user for this session
+        cur.execute("DELETE FROM users WHERE investor_session_id=%s", (investor_session_id,))
+        cur.execute("""
+            INSERT INTO users (email, name, password_hash, role, investor_session_id)
+            VALUES (%s, %s, %s, 'investor', %s) RETURNING id
+        """, (email, name, _hash(password), investor_session_id))
+        uid = cur.fetchone()["id"]
+        conn.commit()
+        return uid
+    finally:
+        put_db(conn)
 
 
 def list_roles() -> list:
     conn = get_db()
-    rows = conn.execute("SELECT * FROM roles ORDER BY is_system DESC, name").fetchall()
-    conn.close()
-    result = []
-    for r in rows:
-        d = dict(r)
-        d["permissions"] = json.loads(d["permissions"] or "[]")
-        result.append(d)
-    return result
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM roles ORDER BY is_system DESC, name")
+        result = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["permissions"] = json.loads(d["permissions"] or "[]")
+            result.append(d)
+        return result
+    finally:
+        put_db(conn)
 
 
 def get_role(role_id: int) -> dict:
     conn = get_db()
-    row = conn.execute("SELECT * FROM roles WHERE id=?", (role_id,)).fetchone()
-    conn.close()
-    if not row:
-        return None
-    d = dict(row)
-    d["permissions"] = json.loads(d["permissions"] or "[]")
-    return d
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM roles WHERE id=%s", (role_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["permissions"] = json.loads(d["permissions"] or "[]")
+        return d
+    finally:
+        put_db(conn)
 
 
 def create_role(name: str, description: str, permissions: list) -> int:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("INSERT INTO roles (name, description, permissions) VALUES (?, ?, ?)",
-              (name.lower().replace(" ", "_"), description, json.dumps(permissions)))
-    conn.commit()
-    rid = c.lastrowid
-    conn.close()
-    return rid
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "INSERT INTO roles (name, description, permissions) VALUES (%s, %s, %s) RETURNING id",
+            (name.lower().replace(" ", "_"), description, json.dumps(permissions))
+        )
+        rid = cur.fetchone()["id"]
+        conn.commit()
+        return rid
+    finally:
+        put_db(conn)
 
 
 def update_role(role_id: int, name: str, description: str, permissions: list):
     conn = get_db()
-    role = conn.execute("SELECT name, is_system FROM roles WHERE id=?", (role_id,)).fetchone()
-    if not role:
-        conn.close()
-        return
-    # Admin always keeps full permissions — never editable
-    if role["name"] == "admin":
-        conn.close()
-        return
-    if role["is_system"]:
-        # System roles (non-admin): update permissions only
-        conn.execute("UPDATE roles SET permissions=? WHERE id=?", (json.dumps(permissions), role_id))
-    else:
-        # Custom roles: update everything
-        conn.execute("UPDATE roles SET name=?, description=?, permissions=? WHERE id=?",
-                     (name.lower().replace(" ", "_"), description, json.dumps(permissions), role_id))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT name, is_system FROM roles WHERE id=%s", (role_id,))
+        role = cur.fetchone()
+        if not role:
+            return
+        # Admin always keeps full permissions — never editable
+        if role["name"] == "admin":
+            return
+        if role["is_system"]:
+            # System roles (non-admin): update permissions only
+            cur.execute("UPDATE roles SET permissions=%s WHERE id=%s",
+                        (json.dumps(permissions), role_id))
+        else:
+            # Custom roles: update everything
+            cur.execute("UPDATE roles SET name=%s, description=%s, permissions=%s WHERE id=%s",
+                        (name.lower().replace(" ", "_"), description, json.dumps(permissions), role_id))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def delete_role(role_id: int):
     conn = get_db()
-    conn.execute("DELETE FROM roles WHERE id=? AND is_system=0", (role_id,))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM roles WHERE id=%s AND is_system=0", (role_id,))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def update_user_role(user_id: int, role: str):
     conn = get_db()
-    conn.execute("UPDATE users SET role=? WHERE id=? AND role != 'investor'", (role, user_id))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET role=%s WHERE id=%s AND role != 'investor'", (role, user_id))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def delete_user(user_id: int):
     conn = get_db()
-    conn.execute("DELETE FROM users WHERE id=? AND role != 'investor'", (user_id,))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE id=%s AND role != 'investor'", (user_id,))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def get_investor_user_by_id(user_id: int) -> dict:
     conn = get_db()
-    row = conn.execute(
-        "SELECT id, email, name, role, investor_session_id, created_at FROM users WHERE id=? AND role='investor'",
-        (user_id,)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT id, email, name, role, investor_session_id, created_at FROM users WHERE id=%s AND role='investor'",
+            (user_id,)
+        )
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def get_investor_user(investor_session_id: int) -> dict:
     conn = get_db()
-    row = conn.execute(
-        "SELECT id, email, name, role, investor_session_id FROM users WHERE investor_session_id=?",
-        (investor_session_id,)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT id, email, name, role, investor_session_id FROM users WHERE investor_session_id=%s",
+            (investor_session_id,)
+        )
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def list_investor_conversations(investor_session_id: int) -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT c.id, c.title, c.created_at, c.updated_at,
-               COUNT(m.id) as message_count
-        FROM conversations c
-        LEFT JOIN messages m ON m.conversation_id = c.id
-        WHERE c.investor_session_id = ? AND (c.status IS NULL OR c.status != 'deleted')
-        GROUP BY c.id
-        ORDER BY c.updated_at DESC
-    """, (investor_session_id,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT c.id, c.title, c.created_at, c.updated_at,
+                   COUNT(m.id) as message_count
+            FROM conversations c
+            LEFT JOIN messages m ON m.conversation_id = c.id
+            WHERE c.investor_session_id = %s AND (c.status IS NULL OR c.status != 'deleted')
+            GROUP BY c.id, c.title, c.created_at, c.updated_at
+            ORDER BY c.updated_at DESC
+        """, (investor_session_id,))
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def soft_delete_investor_conversation(conv_id: int, investor_session_id: int):
     conn = get_db()
-    conn.execute(
-        "UPDATE conversations SET status='deleted' WHERE id=? AND investor_session_id=?",
-        (conv_id, investor_session_id)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE conversations SET status='deleted' WHERE id=%s AND investor_session_id=%s",
+            (conv_id, investor_session_id)
+        )
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def rename_investor_conversation(conv_id: int, investor_session_id: int, title: str):
     conn = get_db()
-    conn.execute(
-        "UPDATE conversations SET title=? WHERE id=? AND investor_session_id=?",
-        (title.strip(), conv_id, investor_session_id)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE conversations SET title=%s WHERE id=%s AND investor_session_id=%s",
+            (title.strip(), conv_id, investor_session_id)
+        )
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
-# ── Human Agent Handover ──────────────────────────────────────────────────────
+# ── Human Agent Handover ───────────────────────────────────────────────────────
 
 def create_handover_request(conversation_id: int, investor_session_id: int, reason: str) -> int:
     conn = get_db()
-    c = conn.cursor()
-    # Cancel any previous open request for this conversation
-    conn.execute("""
-        UPDATE handover_requests SET status='cancelled'
-        WHERE conversation_id=? AND status='pending'
-    """, (conversation_id,))
-    c.execute("""
-        INSERT INTO handover_requests (conversation_id, investor_session_id, reason)
-        VALUES (?, ?, ?)
-    """, (conversation_id, investor_session_id, reason))
-    conn.execute("UPDATE conversations SET status='pending_handover' WHERE id=?", (conversation_id,))
-    conn.commit()
-    hid = c.lastrowid
-    conn.close()
-    return hid
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # Cancel any previous open request for this conversation
+        cur.execute("""
+            UPDATE handover_requests SET status='cancelled'
+            WHERE conversation_id=%s AND status='pending'
+        """, (conversation_id,))
+        cur.execute("""
+            INSERT INTO handover_requests (conversation_id, investor_session_id, reason)
+            VALUES (%s, %s, %s) RETURNING id
+        """, (conversation_id, investor_session_id, reason))
+        hid = cur.fetchone()["id"]
+        cur.execute("UPDATE conversations SET status='pending_handover' WHERE id=%s", (conversation_id,))
+        conn.commit()
+        return hid
+    finally:
+        put_db(conn)
 
 
 def get_pending_handovers() -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT h.*, c.title as conv_title,
-               s.investor_name, s.investor_entity
-        FROM handover_requests h
-        JOIN conversations c ON h.conversation_id = c.id
-        LEFT JOIN investor_sessions s ON h.investor_session_id = s.id
-        WHERE h.status IN ('pending', 'claimed')
-        ORDER BY h.requested_at DESC
-    """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT h.*, c.title as conv_title,
+                   s.investor_name, s.investor_entity
+            FROM handover_requests h
+            JOIN conversations c ON h.conversation_id = c.id
+            LEFT JOIN investor_sessions s ON h.investor_session_id = s.id
+            WHERE h.status IN ('pending', 'claimed')
+            ORDER BY h.requested_at DESC
+        """)
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def get_pending_handover_count() -> int:
     conn = get_db()
-    count = conn.execute(
-        "SELECT COUNT(*) FROM handover_requests WHERE status='pending'"
-    ).fetchone()[0]
-    conn.close()
-    return count
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM handover_requests WHERE status='pending'")
+        return cur.fetchone()[0]
+    finally:
+        put_db(conn)
 
 
 def get_handover_for_conversation(conversation_id: int) -> dict:
     conn = get_db()
-    row = conn.execute("""
-        SELECT h.*, u.name as claimed_by_name
-        FROM handover_requests h
-        LEFT JOIN users u ON h.claimed_by = u.id
-        WHERE h.conversation_id=? AND h.status IN ('pending','claimed')
-        ORDER BY h.requested_at DESC LIMIT 1
-    """, (conversation_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT h.*, u.name as claimed_by_name
+            FROM handover_requests h
+            LEFT JOIN users u ON h.claimed_by = u.id
+            WHERE h.conversation_id=%s AND h.status IN ('pending','claimed')
+            ORDER BY h.requested_at DESC LIMIT 1
+        """, (conversation_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def claim_handover(handover_id: int, user_id: int):
     conn = get_db()
-    conn.execute("""
-        UPDATE handover_requests SET status='claimed', claimed_by=?, claimed_at=datetime('now')
-        WHERE id=?
-    """, (user_id, handover_id))
-    # Update conversation status
-    row = conn.execute("SELECT conversation_id FROM handover_requests WHERE id=?", (handover_id,)).fetchone()
-    if row:
-        conn.execute("UPDATE conversations SET status='human_active' WHERE id=?", (row[0],))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            UPDATE handover_requests SET status='claimed', claimed_by=%s, claimed_at=NOW()
+            WHERE id=%s
+        """, (user_id, handover_id))
+        cur.execute("SELECT conversation_id FROM handover_requests WHERE id=%s", (handover_id,))
+        row = cur.fetchone()
+        if row:
+            cur.execute("UPDATE conversations SET status='human_active' WHERE id=%s",
+                        (row["conversation_id"],))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def resolve_handover(handover_id: int):
     conn = get_db()
-    conn.execute("""
-        UPDATE handover_requests SET status='resolved', resolved_at=datetime('now')
-        WHERE id=?
-    """, (handover_id,))
-    row = conn.execute("SELECT conversation_id FROM handover_requests WHERE id=?", (handover_id,)).fetchone()
-    if row:
-        conn.execute("UPDATE conversations SET status='active' WHERE id=?", (row[0],))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            UPDATE handover_requests SET status='resolved', resolved_at=NOW()
+            WHERE id=%s
+        """, (handover_id,))
+        cur.execute("SELECT conversation_id FROM handover_requests WHERE id=%s", (handover_id,))
+        row = cur.fetchone()
+        if row:
+            cur.execute("UPDATE conversations SET status='active' WHERE id=%s",
+                        (row["conversation_id"],))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def get_messages_since(conversation_id: int, last_id: int) -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT * FROM messages WHERE conversation_id=? AND id>? ORDER BY created_at ASC
-    """, (conversation_id, last_id)).fetchall()
-    conn.close()
-    msgs = []
-    for r in rows:
-        d = dict(r)
-        d["sources"] = []
-        d["themes"] = []
-        msgs.append(d)
-    return msgs
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT * FROM messages WHERE conversation_id=%s AND id>%s ORDER BY created_at ASC
+        """, (conversation_id, last_id))
+        msgs = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["sources"] = []
+            d["themes"] = []
+            msgs.append(d)
+        return msgs
+    finally:
+        put_db(conn)
 
 
 def update_conversation_status(conversation_id: int, status: str):
     conn = get_db()
-    conn.execute("UPDATE conversations SET status=? WHERE id=?", (status, conversation_id))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE conversations SET status=%s WHERE id=%s", (status, conversation_id))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
-# ── Knowledge Base ────────────────────────────────────────────────────────────
+# ── Knowledge Base ─────────────────────────────────────────────────────────────
 
-def list_kb_entries() -> list[dict]:
+def list_kb_entries() -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT kb.*, u.name as created_by_name
-        FROM knowledge_base kb
-        LEFT JOIN users u ON kb.created_by = u.id
-        ORDER BY kb.updated_at DESC
-    """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT kb.*, u.name as created_by_name
+            FROM knowledge_base kb
+            LEFT JOIN users u ON kb.created_by = u.id
+            ORDER BY kb.updated_at DESC
+        """)
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def get_kb_entry(entry_id: int) -> dict:
     conn = get_db()
-    row = conn.execute("SELECT * FROM knowledge_base WHERE id=?", (entry_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM knowledge_base WHERE id=%s", (entry_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def add_kb_entry(question: str, answer: str, tags: str, created_by: int) -> int:
     conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO knowledge_base (question, answer, tags, created_by)
-        VALUES (?, ?, ?, ?)
-    """, (question.strip(), answer.strip(), tags.strip() if tags else "", created_by))
-    entry_id = c.lastrowid
-    # Sync FTS index
-    conn.execute("INSERT INTO kb_fts(rowid, question, answer) VALUES (?, ?, ?)",
-                 (entry_id, question.strip(), answer.strip()))
-    conn.commit()
-    conn.close()
-    return entry_id
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            INSERT INTO knowledge_base (question, answer, tags, created_by)
+            VALUES (%s, %s, %s, %s) RETURNING id
+        """, (question.strip(), answer.strip(), tags.strip() if tags else "", created_by))
+        entry_id = cur.fetchone()["id"]
+        conn.commit()
+        return entry_id
+    finally:
+        put_db(conn)
 
 
 def update_kb_entry(entry_id: int, question: str, answer: str, tags: str):
     conn = get_db()
-    conn.execute("""
-        UPDATE knowledge_base SET question=?, answer=?, tags=?, updated_at=datetime('now')
-        WHERE id=?
-    """, (question.strip(), answer.strip(), tags.strip() if tags else "", entry_id))
-    # Rebuild FTS row
-    conn.execute("DELETE FROM kb_fts WHERE rowid=?", (entry_id,))
-    conn.execute("INSERT INTO kb_fts(rowid, question, answer) VALUES (?, ?, ?)",
-                 (entry_id, question.strip(), answer.strip()))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE knowledge_base SET question=%s, answer=%s, tags=%s, updated_at=NOW()
+            WHERE id=%s
+        """, (question.strip(), answer.strip(), tags.strip() if tags else "", entry_id))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def delete_kb_entry(entry_id: int):
     conn = get_db()
-    conn.execute("DELETE FROM kb_fts WHERE rowid=?", (entry_id,))
-    conn.execute("DELETE FROM knowledge_base WHERE id=?", (entry_id,))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM knowledge_base WHERE id=%s", (entry_id,))
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 _KB_STOP = {
-    "the","a","an","is","are","was","were","be","been","being","have","has",
-    "had","do","does","did","will","would","could","should","may","might",
-    "of","in","on","at","to","for","with","by","from","about","and","or","not",
-    "what","how","when","where","who","which","why","can","your","our","my","tell",
-    "please","give","me","us","you","its","this","that","these","those","also",
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "of", "in", "on", "at", "to", "for", "with",
+    "by", "from", "about", "and", "or", "not", "what", "how", "when",
+    "where", "who", "which", "why", "can", "your", "our", "my", "tell",
+    "please", "give", "me", "us", "you", "its", "this", "that", "these",
+    "those", "also",
 }
 
 
-def _kb_terms(query: str) -> list[str]:
+def _kb_terms(query: str) -> list:
     """Extract significant terms from a query for KB matching."""
     words = [w.strip('.,?!;:"()[]') for w in query.lower().split()]
     return [w for w in words if len(w) > 2 and w not in _KB_STOP]
 
 
-def _run_kb_fts(conn, fts_q: str, limit: int) -> list:
-    try:
-        return conn.execute("""
-            SELECT kb.id, kb.question, kb.answer, kb.tags,
-                   bm25(kb_fts) as score
-            FROM kb_fts
-            JOIN knowledge_base kb ON kb_fts.rowid = kb.id
-            WHERE kb_fts MATCH ?
-            ORDER BY bm25(kb_fts)
-            LIMIT ?
-        """, (fts_q, limit)).fetchall()
-    except Exception:
-        return []
-
-
-def search_kb(query: str, limit: int = 3) -> list[dict]:
+def search_kb(query: str, limit: int = 3) -> list:
     """Search knowledge base. Tries AND query first, falls back to OR with score filter."""
-    conn = get_db()
     terms = _kb_terms(query)
-
-    rows = []
-    if terms:
-        # 1. Try strict AND — all keywords must appear in the KB entry
-        and_q = " AND ".join(terms)
-        rows = _run_kb_fts(conn, and_q, limit)
-
-    if not rows and terms:
-        # 2. Fallback: OR query, but only accept results with a decent BM25 score.
-        #    Score threshold -0.5: at least a few terms must genuinely overlap.
-        or_q = " OR ".join(terms)
-        candidates = _run_kb_fts(conn, or_q, limit)
-        rows = [r for r in candidates if r["score"] < -0.5]
-
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-def get_recent_questions(limit: int = 20) -> list[dict]:
+    if not terms:
+        return []
     conn = get_db()
-    rows = conn.execute("""
-        SELECT m.content as question, m.themes, m.created_at,
-               c.title as conversation_title,
-               s.investor_name
-        FROM messages m
-        JOIN conversations c ON m.conversation_id = c.id
-        LEFT JOIN investor_sessions s ON c.investor_session_id = s.id
-        WHERE m.role = 'user'
-        ORDER BY m.created_at DESC
-        LIMIT ?
-    """, (limit,)).fetchall()
-    conn.close()
-    results = []
-    for r in rows:
-        d = dict(r)
-        d["themes"] = json.loads(d["themes"]) if d["themes"] else []
-        results.append(d)
-    return results
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        rows = []
+        # 1. Try strict AND — all keywords must appear in the KB entry
+        and_q = " & ".join(terms)
+        try:
+            cur.execute("""
+                SELECT id, question, answer, tags,
+                       ts_rank(search_vector, to_tsquery('english', %s)) as score
+                FROM knowledge_base
+                WHERE search_vector @@ to_tsquery('english', %s)
+                ORDER BY score DESC
+                LIMIT %s
+            """, (and_q, and_q, limit))
+            rows = cur.fetchall()
+        except Exception:
+            conn.rollback()
+            rows = []
+
+        if not rows:
+            # 2. Fallback: OR query with score threshold
+            or_q = " | ".join(terms)
+            try:
+                cur.execute("""
+                    SELECT id, question, answer, tags,
+                           ts_rank(search_vector, to_tsquery('english', %s)) as score
+                    FROM knowledge_base
+                    WHERE search_vector @@ to_tsquery('english', %s)
+                      AND ts_rank(search_vector, to_tsquery('english', %s)) > 0.01
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (or_q, or_q, or_q, limit))
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                rows = []
+
+        return list(rows)
+    finally:
+        put_db(conn)
 
 
-# ── LLM Key Management ────────────────────────────────────────────────────────
+def add_session_answer(investor_session_id: int, question: str, answer: str) -> int:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "INSERT INTO session_answers (investor_session_id, question, answer) VALUES (%s, %s, %s) RETURNING id",
+            (investor_session_id, question, answer)
+        )
+        entry_id = cur.fetchone()["id"]
+        conn.commit()
+        return entry_id
+    finally:
+        put_db(conn)
+
+
+def list_session_answers(investor_session_id: int) -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT * FROM session_answers WHERE investor_session_id=%s ORDER BY created_at DESC",
+            (investor_session_id,)
+        )
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
+
+
+def delete_session_answer(answer_id: int, investor_session_id: int):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM session_answers WHERE id=%s AND investor_session_id=%s",
+                    (answer_id, investor_session_id))
+        conn.commit()
+    finally:
+        put_db(conn)
+
+
+def search_session_answers(query: str, investor_session_id: int, limit: int = 1) -> list:
+    """Search investor-provided session answers using same AND/OR strategy as search_kb."""
+    terms = _kb_terms(query)
+    if not terms:
+        return []
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        rows = []
+        and_q = " & ".join(terms)
+        try:
+            cur.execute("""
+                SELECT id, question, answer,
+                       ts_rank(search_vector, to_tsquery('english', %s)) as score
+                FROM session_answers
+                WHERE search_vector @@ to_tsquery('english', %s)
+                  AND investor_session_id = %s
+                ORDER BY score DESC
+                LIMIT %s
+            """, (and_q, and_q, investor_session_id, limit))
+            rows = cur.fetchall()
+        except Exception:
+            conn.rollback()
+            rows = []
+
+        if not rows:
+            or_q = " | ".join(terms)
+            try:
+                cur.execute("""
+                    SELECT id, question, answer,
+                           ts_rank(search_vector, to_tsquery('english', %s)) as score
+                    FROM session_answers
+                    WHERE search_vector @@ to_tsquery('english', %s)
+                      AND investor_session_id = %s
+                      AND ts_rank(search_vector, to_tsquery('english', %s)) > 0.01
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (or_q, or_q, investor_session_id, or_q, limit))
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                rows = []
+
+        return list(rows)
+    finally:
+        put_db(conn)
+
+
+def bulk_import_kb(entries: list, created_by: int) -> int:
+    """Import list of {question, answer, tags} dicts. Returns count imported."""
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        count = 0
+        for e in entries:
+            q = e.get("question", "").strip()
+            a = e.get("answer", "").strip()
+            if not q or not a:
+                continue
+            cur.execute(
+                "INSERT INTO knowledge_base (question, answer, tags, created_by) VALUES (%s, %s, %s, %s)",
+                (q, a, e.get("tags", ""), created_by)
+            )
+            count += 1
+        conn.commit()
+        return count
+    finally:
+        put_db(conn)
+
+
+def get_recent_questions(limit: int = 20) -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT m.content as question, m.themes, m.created_at,
+                   c.title as conversation_title,
+                   s.investor_name
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            LEFT JOIN investor_sessions s ON c.investor_session_id = s.id
+            WHERE m.role = 'user'
+            ORDER BY m.created_at DESC
+            LIMIT %s
+        """, (limit,))
+        results = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["themes"] = json.loads(d["themes"]) if d["themes"] else []
+            results.append(d)
+        return results
+    finally:
+        put_db(conn)
+
+
+# ── LLM Key Management ─────────────────────────────────────────────────────────
 
 COST_RATES = {
     # OpenAI
@@ -1186,52 +1702,70 @@ COST_RATES = {
 def get_env_key_sentinel_id() -> int:
     """Returns the ID of the sentinel row used to track env-var key usage."""
     conn = get_db()
-    row = conn.execute("SELECT id FROM llm_keys WHERE api_key_hint='env' LIMIT 1").fetchone()
-    conn.close()
-    return row["id"] if row else 1
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT id FROM llm_keys WHERE api_key_hint='env' LIMIT 1")
+        row = cur.fetchone()
+        return row["id"] if row else 1
+    finally:
+        put_db(conn)
 
 
 def list_llm_keys() -> list:
     conn = get_db()
-    # Exclude the internal sentinel row from the admin UI
-    rows = conn.execute(
-        "SELECT * FROM llm_keys WHERE api_key_hint != 'env' ORDER BY priority ASC, id ASC"
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # Exclude the internal sentinel row from the admin UI
+        cur.execute(
+            "SELECT * FROM llm_keys WHERE api_key_hint != 'env' ORDER BY priority ASC, id ASC"
+        )
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def get_active_llm_keys() -> list:
     conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM llm_keys WHERE is_active=1 AND api_key_hint != 'env' ORDER BY priority ASC, id ASC"
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT * FROM llm_keys WHERE is_active=1 AND api_key_hint != 'env' ORDER BY priority ASC, id ASC"
+        )
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
 
 
 def get_llm_key(key_id: int) -> dict:
     conn = get_db()
-    row = conn.execute("SELECT * FROM llm_keys WHERE id=?", (key_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM llm_keys WHERE id=%s", (key_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
 
 
 def add_llm_key(name: str, provider: str, model: str, api_key_enc: str, hint: str,
                 priority: int = None, base_url: str = "") -> int:
     conn = get_db()
-    c = conn.cursor()
-    if priority is None:
-        row = conn.execute("SELECT MAX(priority) FROM llm_keys").fetchone()
-        priority = (row[0] or 0) + 1
-    c.execute(
-        "INSERT INTO llm_keys (name, provider, model, api_key_enc, api_key_hint, priority, base_url) VALUES (?,?,?,?,?,?,?)",
-        (name, provider, model, api_key_enc, hint, priority, base_url or "")
-    )
-    conn.commit()
-    rid = c.lastrowid
-    conn.close()
-    return rid
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        if priority is None:
+            cur.execute("SELECT MAX(priority) FROM llm_keys")
+            row = cur.fetchone()
+            max_p = list(row.values())[0]
+            priority = (max_p or 0) + 1
+        cur.execute(
+            "INSERT INTO llm_keys (name, provider, model, api_key_enc, api_key_hint, priority, base_url) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (name, provider, model, api_key_enc, hint, priority, base_url or "")
+        )
+        rid = cur.fetchone()["id"]
+        conn.commit()
+        return rid
+    finally:
+        put_db(conn)
 
 
 def update_llm_key(key_id: int, **kwargs):
@@ -1241,73 +1775,92 @@ def update_llm_key(key_id: int, **kwargs):
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
-    set_clause = ", ".join(f"{k}=?" for k in fields)
+    set_clause = ", ".join(f"{k}=%s" for k in fields)
     values = list(fields.values()) + [key_id]
     conn = get_db()
-    conn.execute(f"UPDATE llm_keys SET {set_clause} WHERE id=?", values)
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE llm_keys SET {set_clause} WHERE id=%s", values)
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def delete_llm_key(key_id: int):
     conn = get_db()
-    conn.execute("DELETE FROM llm_keys WHERE id=?", (key_id,))
-    conn.commit()
-    conn.close()
-
-
-def move_llm_key(key_id: int, direction: str):
-    conn = get_db()
-    row = conn.execute("SELECT priority FROM llm_keys WHERE id=?", (key_id,)).fetchone()
-    if not row:
-        conn.close()
-        return
-    cur = row["priority"]
-    if direction == "up":
-        neighbor = conn.execute(
-            "SELECT id, priority FROM llm_keys WHERE priority < ? ORDER BY priority DESC LIMIT 1",
-            (cur,)
-        ).fetchone()
-    else:
-        neighbor = conn.execute(
-            "SELECT id, priority FROM llm_keys WHERE priority > ? ORDER BY priority ASC LIMIT 1",
-            (cur,)
-        ).fetchone()
-    if neighbor:
-        conn.execute("UPDATE llm_keys SET priority=? WHERE id=?", (neighbor["priority"], key_id))
-        conn.execute("UPDATE llm_keys SET priority=? WHERE id=?", (cur, neighbor["id"]))
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM llm_keys WHERE id=%s", (key_id,))
         conn.commit()
-    conn.close()
+    finally:
+        put_db(conn)
+
+
+def move_llm_key_priority(key_id: int, direction: str):
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT priority FROM llm_keys WHERE id=%s", (key_id,))
+        row = cur.fetchone()
+        if not row:
+            return
+        cur_priority = row["priority"]
+        if direction == "up":
+            cur.execute(
+                "SELECT id, priority FROM llm_keys WHERE priority < %s ORDER BY priority DESC LIMIT 1",
+                (cur_priority,)
+            )
+        else:
+            cur.execute(
+                "SELECT id, priority FROM llm_keys WHERE priority > %s ORDER BY priority ASC LIMIT 1",
+                (cur_priority,)
+            )
+        neighbor = cur.fetchone()
+        if neighbor:
+            cur.execute("UPDATE llm_keys SET priority=%s WHERE id=%s",
+                        (neighbor["priority"], key_id))
+            cur.execute("UPDATE llm_keys SET priority=%s WHERE id=%s",
+                        (cur_priority, neighbor["id"]))
+            conn.commit()
+    finally:
+        put_db(conn)
 
 
 def log_llm_usage(key_id: int, provider: str, model: str, input_tokens: int, output_tokens: int):
     rates = COST_RATES.get(model, {"input": 0, "output": 0})
     cost = (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
     conn = get_db()
-    conn.execute(
-        "INSERT INTO llm_usage (llm_key_id, provider, model, input_tokens, output_tokens, cost_usd) VALUES (?,?,?,?,?,?)",
-        (key_id, provider, model, input_tokens, output_tokens, cost)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO llm_usage (llm_key_id, provider, model, input_tokens, output_tokens, cost_usd) VALUES (%s, %s, %s, %s, %s, %s)",
+            (key_id, provider, model, input_tokens, output_tokens, cost)
+        )
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def get_llm_usage_stats() -> list:
     conn = get_db()
-    rows = conn.execute("""
-        SELECT
-            k.name,
-            COALESCE(u.model, k.model)         AS model,
-            COALESCE(SUM(u.input_tokens), 0)   AS total_input,
-            COALESCE(SUM(u.output_tokens), 0)  AS total_output,
-            COALESCE(SUM(u.cost_usd), 0)       AS total_cost,
-            COUNT(u.id)                         AS requests,
-            MAX(u.created_at)                   AS last_used
-        FROM llm_keys k
-        LEFT JOIN llm_usage u ON u.llm_key_id = k.id
-        GROUP BY k.id, u.model
-        ORDER BY k.priority ASC, k.id ASC
-    """).fetchall()
-    conn.close()
-    # Only return rows that have either had usage or are active real keys
-    return [dict(r) for r in rows if r["requests"] > 0]
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT
+                k.name,
+                COALESCE(u.model, k.model)         AS model,
+                COALESCE(SUM(u.input_tokens), 0)   AS total_input,
+                COALESCE(SUM(u.output_tokens), 0)  AS total_output,
+                COALESCE(SUM(u.cost_usd), 0)       AS total_cost,
+                COUNT(u.id)                         AS requests,
+                MAX(u.created_at)                   AS last_used
+            FROM llm_keys k
+            LEFT JOIN llm_usage u ON u.llm_key_id = k.id
+            GROUP BY k.id, k.name, k.model, k.priority, u.model
+            ORDER BY k.priority ASC, k.id ASC
+        """)
+        rows = cur.fetchall()
+        # Only return rows that have had usage
+        return [_row(dict(r)) for r in rows if r["requests"] > 0]
+    finally:
+        put_db(conn)

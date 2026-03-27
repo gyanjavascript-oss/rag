@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Provided Answers</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    body { background: #0f1f3d; color: #fff; font-family: 'Inter', sans-serif; margin: 0; }
+    .page-wrap { max-width: 760px; margin: 0 auto; padding: 2rem 1.25rem; }
+    .page-back { display:inline-flex;align-items:center;gap:.4rem;color:rgba(255,255,255,.5);text-decoration:none;font-size:.82rem;margin-bottom:1.5rem; }
+    .page-back:hover { color:#c9a84c; }
+    h1 { font-size:1.35rem;margin:0 0 .3rem;color:#fff; }
+    .sub { color:rgba(255,255,255,.5);font-size:.85rem;margin-bottom:2rem; }
+    .qa-card { background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:1.1rem 1.25rem;margin-bottom:.75rem;position:relative; }
+    .qa-q { font-size:.82rem;font-weight:600;color:#c9a84c;margin-bottom:.4rem; }
+    .qa-a { font-size:.82rem;color:rgba(255,255,255,.75);line-height:1.6;white-space:pre-wrap; }
+    .qa-date { font-size:.72rem;color:rgba(255,255,255,.3);margin-top:.5rem; }
+    .qa-del { position:absolute;top:.75rem;right:.75rem;background:none;border:none;color:rgba(255,255,255,.25);cursor:pointer;font-size:.8rem;padding:.2rem .4rem;border-radius:4px; }
+    .qa-del:hover { color:#e53e3e;background:rgba(229,62,62,.1); }
+    .add-card { background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.2);border-radius:10px;padding:1.25rem;margin-bottom:1.5rem; }
+    .add-card h3 { margin:0 0 1rem;font-size:.95rem;color:#c9a84c; }
+    .tabs { display:flex;gap:.5rem;margin-bottom:1rem; }
+    .tab-btn { background:none;border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.5);padding:.35rem .85rem;border-radius:6px;font-size:.8rem;cursor:pointer; }
+    .tab-btn.active { background:#c9a84c;border-color:#c9a84c;color:#0f1f3d;font-weight:600; }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
+    label { display:block;font-size:.78rem;color:rgba(255,255,255,.5);margin-bottom:.3rem; }
+    input, textarea { width:100%;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:.6rem .75rem;color:#fff;font-size:.82rem;font-family:inherit;box-sizing:border-box;margin-bottom:.75rem; }
+    textarea { resize:vertical;min-height:80px; }
+    input:focus, textarea:focus { outline:none;border-color:#c9a84c; }
+    .btn-gold { background:#c9a84c;color:#0f1f3d;border:none;padding:.6rem 1.4rem;border-radius:7px;font-weight:600;font-size:.85rem;cursor:pointer; }
+    .btn-gold:hover { background:#b8973b; }
+    .hint { font-size:.75rem;color:rgba(255,255,255,.35);margin-bottom:.75rem;line-height:1.5; }
+    .empty { text-align:center;padding:3rem;color:rgba(255,255,255,.3);font-size:.85rem; }
+    .info-box { background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:1rem 1.25rem;margin-bottom:1.5rem;font-size:.8rem;color:rgba(255,255,255,.5);line-height:1.7; }
+    .info-box strong { color:rgba(255,255,255,.8); }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+  <a href="{{ url_for('investor_portal') }}" class="page-back">← Back to portal</a>
+  <h1>My Provided Answers</h1>
+  <p class="sub">Paste DDQ answers you already have. The system will use these first when you ask similar questions.</p>
+
+  <div class="info-box">
+    <strong>How this works:</strong> When you ask a question, the system checks your provided answers first.
+    If a match is found, it returns your verified answer directly — no document guesswork needed.
+    This ensures structurally sensitive answers (fees, notice periods, fund terms) are always accurate.
+  </div>
+
+  <!-- Add form -->
+  <div class="add-card">
+    <h3>Add Answers</h3>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('single', this)">Single Q&amp;A</button>
+      <button class="tab-btn" onclick="switchTab('bulk', this)">Bulk Paste</button>
+    </div>
+
+    <div id="tab-single" class="tab-panel active">
+      <form method="POST" action="{{ url_for('investor_add_answer') }}">
+        <div>
+          <label>Question</label>
+          <input type="text" name="question" placeholder="e.g. What is the management fee?" required>
+        </div>
+        <div>
+          <label>Answer</label>
+          <textarea name="answer" rows="3" placeholder="Enter the accurate answer…" required></textarea>
+        </div>
+        <button type="submit" class="btn-gold">Add Answer</button>
+      </form>
+    </div>
+
+    <div id="tab-bulk" class="tab-panel">
+      <form method="POST" action="{{ url_for('investor_bulk_answers') }}">
+        <div class="hint">
+          Paste your DDQ in Q: / A: format. Separate each pair with a blank line.<br>
+          Example:<br>
+          Q: What is the management fee?<br>
+          A: 1.5% per annum on committed capital.<br>
+          <br>
+          Q: What is the fund term?<br>
+          A: 10 years with two 1-year extensions.
+        </div>
+        <label>Paste DDQ content</label>
+        <textarea name="bulk_text" rows="10" placeholder="Q: ...\nA: ...\n\nQ: ...\nA: ..." required></textarea>
+        <button type="submit" class="btn-gold">Import All</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Existing answers -->
+  {% if answers %}
+    {% for a in answers %}
+    <div class="qa-card">
+      <div class="qa-q">Q: {{ a.question }}</div>
+      <div class="qa-a">{{ a.answer }}</div>
+      <div class="qa-date">Added {{ a.created_at[:10] }}</div>
+      <form method="POST" action="{{ url_for('investor_delete_answer', answer_id=a.id) }}" style="display:inline;" onsubmit="return confirm('Remove this answer?')">
+        <button class="qa-del" title="Remove">&#x2715;</button>
+      </form>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty">No answers provided yet. Add your first one above.</div>
+  {% endif %}
+</div>
+<script>
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>

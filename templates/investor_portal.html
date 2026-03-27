@@ -37,8 +37,14 @@
     .portal-new-btn { margin: .6rem 1.25rem; display: flex; align-items: center; justify-content: center; padding: .5rem; border-radius: 6px; background: rgba(201,168,76,.2); border: 1px solid rgba(201,168,76,.4); color: #c9a84c; font-size: .875rem; font-weight: 600; cursor: pointer; text-decoration: none; }
     .portal-new-btn:hover { background: rgba(201,168,76,.3); text-decoration: none; }
     .portal-doc-list { overflow-y: scroll; padding: 0 1.25rem .5rem; flex: 1; min-height: 0; }
-    .portal-doc-item { display: flex; align-items: center; gap: .4rem; padding: .28rem 0; font-size: .78rem; color: rgba(255,255,255,.5); border-bottom: 1px solid rgba(255,255,255,.05); }
+    .portal-doc-item-wrap { position: relative; display: flex; align-items: center; border-bottom: 1px solid rgba(255,255,255,.05); }
+    .portal-doc-item { display: flex; align-items: center; gap: .4rem; padding: .28rem 0; font-size: .78rem; color: rgba(255,255,255,.5); flex: 1; border-bottom: none; }
     .portal-doc-dot { width: 5px; height: 5px; border-radius: 50%; background: #c9a84c; flex-shrink: 0; }
+    .doc-info-btn { background: none; border: none; color: rgba(255,255,255,.3); font-size: .75rem; cursor: pointer; padding: 0 .25rem; line-height: 1; flex-shrink: 0; transition: color .15s; }
+    .doc-info-btn:hover { color: #c9a84c; }
+    .doc-summary-popup { position: absolute; left: 0; bottom: calc(100% + 4px); background: #1a2d55; border: 1px solid rgba(201,168,76,.4); border-radius: 8px; padding: .75rem 1rem; width: 260px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+    .doc-summary-title { font-size: .72rem; font-weight: 600; color: #c9a84c; margin-bottom: .4rem; }
+    .doc-summary-text { font-size: .72rem; color: rgba(255,255,255,.65); line-height: 1.5; max-height: 140px; overflow-y: auto; }
     .portal-sidebar-footer { padding: 1rem 1.25rem; border-top: 1px solid rgba(255,255,255,.1); display: flex; align-items: center; gap: .6rem; }
     .portal-user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #c9a84c; color: #0f1f3d; display: flex; align-items: center; justify-content: center; font-size: .8rem; font-weight: 700; flex-shrink: 0; }
     .portal-user-name { font-size: .85rem; font-weight: 600; flex: 1; }
@@ -191,12 +197,22 @@
         <div class="portal-sidebar-section">Available Documents</div>
         <div class="portal-doc-list">
           {% for d in assigned_docs %}
-          <a href="{{ url_for('investor_view_document', doc_id=d.id) }}" target="_blank"
-             class="portal-doc-item" style="text-decoration:none;cursor:pointer;" title="Click to view {{ d.name }}">
-            <span class="portal-doc-dot"></span>
-            <span style="flex:1;">{{ d.name }}</span>
-            <span style="font-size:.65rem;opacity:.5;">↗</span>
-          </a>
+          <div class="portal-doc-item-wrap">
+            <a href="{{ url_for('investor_view_document', doc_id=d.id) }}" target="_blank"
+               class="portal-doc-item" style="text-decoration:none;cursor:pointer;" title="Click to view {{ d.name }}">
+              <span class="portal-doc-dot"></span>
+              <span style="flex:1;">{{ d.name }}</span>
+              <span style="font-size:.65rem;opacity:.5;">↗</span>
+            </a>
+            {% if d.summary_snippet %}
+            <button class="doc-info-btn" onclick="toggleDocSummary(this)" aria-label="Document summary"
+                    data-summary="{{ d.summary_snippet[:400] | e }}">ⓘ</button>
+            <div class="doc-summary-popup" hidden>
+              <div class="doc-summary-title">{{ d.name }}</div>
+              <div class="doc-summary-text">{{ d.summary_snippet[:400] }}{% if d.summary_snippet|length > 400 %}…{% endif %}</div>
+            </div>
+            {% endif %}
+          </div>
           {% endfor %}
         </div>
       </div>
@@ -208,6 +224,8 @@
       <div class="portal-user-name">{{ investor.name }}</div>
       <div style="display:flex;gap:.5rem;align-items:center;">
         <a href="{{ url_for('investor_profile') }}" class="portal-logout">Profile</a>
+        <span style="color:rgba(255,255,255,.2);">·</span>
+        <a href="{{ url_for('investor_my_answers') }}" class="portal-logout">My Answers</a>
         <span style="color:rgba(255,255,255,.2);">·</span>
         <a href="{{ url_for('investor_logout') }}" class="portal-logout">Sign out</a>
       </div>
@@ -556,7 +574,7 @@ function addAssistantBubble(data) {
   renderSources(data.sources || []);
   scrollBottom();
 
-  if (!data._kb_match && conf === "low" && srcCount === 0) {
+  if (!data._kb_match && conf === "low") {
     setTimeout(showHandoverBanner, 600);
   }
 }
@@ -643,7 +661,7 @@ function sendQuestion() {
           streamBubble.querySelector(".msg-meta").innerHTML =
             `AI Assistant${srcCount ? ` · ${srcCount} source${srcCount !== 1 ? "s" : ""}` : ""} · <span class="conf-badge conf-${conf}">${conf}</span>`;
           renderSources(d.sources || []);
-          if (!d._kb_match && conf === "low" && srcCount === 0) {
+          if (!d._kb_match && conf === "low") {
             setTimeout(showHandoverBanner, 600);
           }
         } else {
@@ -714,6 +732,25 @@ function pollMessages() {
 }
 </script>
 {% endif %}
+
+<script>
+function toggleDocSummary(btn) {
+  const wrap = btn.parentElement;
+  const popup = wrap.querySelector('.doc-summary-popup');
+  const isHidden = popup.hidden;
+  // Close all open popups first
+  document.querySelectorAll('.doc-summary-popup').forEach(p => { p.hidden = true; });
+  if (isHidden) {
+    popup.hidden = false;
+    // Close when clicking outside
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!wrap.contains(e.target)) { popup.hidden = true; document.removeEventListener('click', handler); }
+      });
+    }, 0);
+  }
+}
+</script>
 
 <!-- Rename Modal -->
 <div id="renameModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;align-items:center;justify-content:center;">

@@ -112,6 +112,20 @@
       </form>
     </div>
 
+    <div class="card" style="margin-top:1rem;">
+      <div class="card-header">
+        <h2 class="card-title">Bulk Import</h2>
+      </div>
+      <form method="POST" action="{{ url_for('kb_bulk_import') }}" style="padding:1.25rem;">
+        <div class="field-group">
+          <label>Paste Q&amp;A pairs</label>
+          <textarea name="bulk_text" rows="8" placeholder="Q: What is the management fee?&#10;A: 1.5% per annum on committed capital.&#10;&#10;Q: What is the fund term?&#10;A: 10 years with two 1-year extensions." required></textarea>
+          <div class="field-hint">Use Q: / A: format. Separate each pair with a blank line. All pairs will be added to the Knowledge Base.</div>
+        </div>
+        <button type="submit" class="btn-primary" style="width:100%;">Import All</button>
+      </form>
+    </div>
+
     <div class="card" style="margin-top:1rem;background:#f0f8ff;border-color:#bee3f8;">
       <div style="padding:1rem 1.25rem;">
         <h4 style="margin:0 0 .5rem;font-size:.85rem;color:var(--navy);">How it works</h4>

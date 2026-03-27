@@ -134,28 +134,24 @@ def ingest_fund_document(filepath: str, name: str, doc_type: str,
             c["page_ref"] = None
 
     conn = get_db()
-    c = conn.cursor()
+    cur = conn.cursor()
 
-    # Insert document record
-    c.execute("""
+    # Insert document record — RETURNING id works with plain psycopg2 cursor
+    cur.execute("""
         INSERT INTO fund_documents (name, doc_type, filepath, content, uploaded_by)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
     """, (name, doc_type, filepath, content[:10000], uploaded_by))
-    doc_id = c.lastrowid
+    doc_id = cur.fetchone()[0]
 
-    # Insert chunks and update FTS
+    # Insert chunks — tsvector trigger auto-populates the FTS column
     for i, chunk in enumerate(chunks):
-        c.execute("""
+        cur.execute("""
             INSERT INTO document_chunks
                 (document_id, chunk_text, chunk_index, page_ref, section_ref)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
         """, (doc_id, chunk["text"], i,
               chunk.get("page_ref"), chunk.get("section_ref")))
-        chunk_rowid = c.lastrowid
-        conn.execute(
-            "INSERT INTO chunks_fts(rowid, chunk_text) VALUES (?, ?)",
-            (chunk_rowid, chunk["text"])
-        )
 
     conn.commit()
     conn.close()
@@ -175,25 +171,21 @@ def ingest_investor_document(filepath: str, name: str, doc_type: str,
             c["page_ref"] = None
 
     conn = get_db()
-    c = conn.cursor()
+    cur = conn.cursor()
 
-    c.execute("""
+    cur.execute("""
         INSERT INTO investor_documents
             (investor_session_id, name, filepath, doc_type, content)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
     """, (investor_session_id, name, filepath, doc_type, content[:10000]))
-    inv_doc_id = c.lastrowid
+    inv_doc_id = cur.fetchone()[0]
 
     for i, chunk in enumerate(chunks):
-        c.execute("""
+        cur.execute("""
             INSERT INTO investor_doc_chunks (investor_doc_id, chunk_text, chunk_index)
-            VALUES (?, ?, ?)
+            VALUES (%s, %s, %s)
         """, (inv_doc_id, chunk["text"], i))
-        chunk_rowid = c.lastrowid
-        conn.execute(
-            "INSERT INTO inv_chunks_fts(rowid, chunk_text) VALUES (?, ?)",
-            (chunk_rowid, chunk["text"])
-        )
 
     conn.commit()
     conn.close()

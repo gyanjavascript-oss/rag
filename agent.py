@@ -17,6 +17,7 @@ from database import (
     search_investor_documents,
     find_similar_questions,
     search_kb,
+    search_session_answers,
     get_active_llm_keys,
     log_llm_usage,
     get_env_key_sentinel_id,
@@ -87,10 +88,11 @@ SYSTEM_PROMPT = f"""You are an expert DDQ (Due Diligence Questionnaire) assistan
 Your role is to help the investor relations team respond to questions using the fund's official documentation. You MUST always search the documents before answering — never answer from general knowledge.
 
 MANDATORY WORKFLOW — follow this every time:
-1. ALWAYS call search_fund_documents first with relevant keywords from the question
-2. If the question involves the investor's own documents, also call search_investor_documents
-3. Optionally call find_similar_questions for consistency with prior answers
-4. After retrieving results, compose your response
+1. If the investor asks what documents are available, what you have, or what materials exist — call list_available_documents immediately
+2. Otherwise, call search_fund_documents first with relevant keywords from the question
+3. If the question involves the investor's own documents, also call search_investor_documents
+4. Optionally call find_similar_questions for consistency with prior answers
+5. After retrieving results, compose your response
 
 RESPONSE FORMAT — you MUST return ONLY valid JSON, no other text:
 {{
@@ -105,8 +107,9 @@ RESPONSE FORMAT — you MUST return ONLY valid JSON, no other text:
 }}
 
 RULES:
-- You MUST call search_fund_documents before composing any answer
-- Base your answer ONLY on what was found in the retrieved documents
+- You MUST call a tool before composing any answer
+- For "what documents do you have / what materials are available" type questions, call list_available_documents
+- Base your answer ONLY on what was found in the retrieved documents or document list
 - If nothing relevant is found, say so clearly in the answer field — do not invent information
 - Always populate the sources array with what was found
 - THEMES must be from: fee structure, performance, portfolio, governance, legal structure,
@@ -168,6 +171,22 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "list_available_documents",
+            "description": (
+                "List all documents available to the current investor. "
+                "Use this when the investor asks what documents, materials, or information you have, "
+                "what is available to them, or any similar question about document availability."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_similar_questions",
             "description": (
                 "Find previously answered similar questions for reference and consistency. "
@@ -190,6 +209,22 @@ TOOLS = [
 
 def _execute_tool(tool_name: str, tool_input: dict, investor_session_id: int = None,
                   is_investor: bool = False) -> str:
+    if tool_name == "list_available_documents":
+        if investor_session_id:
+            from database import get_assigned_documents
+            docs = get_assigned_documents(investor_session_id)
+        else:
+            from database import list_fund_documents
+            docs = list_fund_documents()
+        if not docs:
+            return json.dumps({"documents": [], "message": "No documents are currently available."})
+        return json.dumps({
+            "documents": [
+                {"name": d["name"], "type": d.get("doc_type", ""), "summary": (d.get("summary_snippet") or "")[:300]}
+                for d in docs
+            ]
+        })
+
     if tool_name == "search_fund_documents":
         if is_investor and investor_session_id:
             results = search_assigned_fund_documents(
@@ -285,6 +320,25 @@ def _check_knowledge_base(question: str) -> dict | None:
     }
 
 
+def _check_session_answers(question: str, investor_session_id: int) -> dict | None:
+    """Check investor-provided session answers first (highest priority)."""
+    if not investor_session_id:
+        return None
+    hits = search_session_answers(question, investor_session_id, limit=1)
+    if not hits:
+        return None
+    best = hits[0]
+    return {
+        "answer": best["answer"],
+        "sources": [{"doc_name": "Your Provided Answers", "section": "Investor-verified answer", "excerpt": best["question"]}],
+        "draft_response": f"Thank you for your question.\n\n{best['answer']}\n\nPlease let us know if you need any further clarification.",
+        "themes": ["other"],
+        "confidence": "high",
+        "gaps": None,
+        "_kb_match": True,
+    }
+
+
 def _answer_anthropic(client, model: str, key_id, messages: list,
                       investor_session_id: int, is_investor: bool) -> dict | None:
     """Run tool-use loop with Anthropic client. Returns parsed result dict or None on failure."""
@@ -341,6 +395,9 @@ def answer_question(
     is_investor: bool = False,
 ) -> dict:
     """Run the DDQ agent. Returns parsed dict with answer, sources, draft_response, themes."""
+    session_result = _check_session_answers(question, investor_session_id)
+    if session_result:
+        return session_result
     kb_result = _check_knowledge_base(question)
     if kb_result:
         return kb_result
@@ -354,6 +411,11 @@ def answer_question(
         messages[0]["content"] += f"\n\nCURRENT INVESTOR: {investor_name}"
         if investor_session_id:
             messages[0]["content"] += f" (investor_session_id: {investor_session_id})"
+            from database import get_assigned_documents
+            assigned_docs = get_assigned_documents(investor_session_id)
+            if assigned_docs:
+                doc_names = ", ".join(d["name"] for d in assigned_docs)
+                messages[0]["content"] += f"\nDocuments available to this investor: {doc_names}"
             messages[0]["content"] += "\nInvestor-specific documents are available — search them."
 
     for key_id, model, provider, client in clients:
@@ -368,11 +430,17 @@ def answer_question(
             msgs = [m.copy() for m in messages]
             first_call = True
             for _ in range(6):
+                # Investors can trigger list_available_documents, so let model pick
+                # Internal staff: force search on first call
+                if first_call and not is_investor:
+                    tc_choice = {"type": "function", "function": {"name": "search_fund_documents"}}
+                else:
+                    tc_choice = "auto"
                 response = client.chat.completions.create(
                     model=model,
                     messages=msgs,
                     tools=TOOLS,
-                    tool_choice={"type": "function", "function": {"name": "search_fund_documents"}} if first_call else "auto",
+                    tool_choice=tc_choice,
                     response_format={"type": "json_object"},
                 )
                 first_call = False
@@ -407,7 +475,11 @@ def stream_answer(
     Generator yielding SSE-formatted strings.
     Runs tool-use loop first (non-streaming), then yields the final result.
     """
-    # Check admin knowledge base first
+    # Check investor session answers first (highest priority), then admin knowledge base
+    session_result = _check_session_answers(question, investor_session_id)
+    if session_result:
+        yield f"data: {json.dumps({'type': 'result', 'data': session_result})}\n\n"
+        return
     kb_result = _check_knowledge_base(question)
     if kb_result:
         yield f"data: {json.dumps({'type': 'result', 'data': kb_result})}\n\n"
@@ -423,6 +495,11 @@ def stream_answer(
         messages[0]["content"] += f"\n\nCURRENT INVESTOR: {investor_name}"
         if investor_session_id:
             messages[0]["content"] += f" (investor_session_id: {investor_session_id})"
+            from database import get_assigned_documents
+            assigned_docs = get_assigned_documents(investor_session_id)
+            if assigned_docs:
+                doc_names = ", ".join(d["name"] for d in assigned_docs)
+                messages[0]["content"] += f"\nDocuments available to this investor: {doc_names}"
             messages[0]["content"] += "\nInvestor-specific documents are available — search them."
 
     for key_id, model, provider, client in clients:
@@ -444,11 +521,15 @@ def stream_answer(
             msgs = [m.copy() for m in messages]
             first_call = True
             for _ in range(6):
+                if first_call and not is_investor:
+                    tc_choice = {"type": "function", "function": {"name": "search_fund_documents"}}
+                else:
+                    tc_choice = "auto"
                 response = client.chat.completions.create(
                     model=model,
                     messages=msgs,
                     tools=TOOLS,
-                    tool_choice={"type": "function", "function": {"name": "search_fund_documents"}} if first_call else "auto",
+                    tool_choice=tc_choice,
                     response_format={"type": "json_object"},
                 )
                 first_call = False
@@ -553,7 +634,6 @@ Return ONLY valid JSON with this exact structure:
     for key_id, model, provider, client in clients:
         try:
             if provider == "anthropic":
-                import anthropic as _anthropic
                 resp = client.messages.create(
                     model=model, max_tokens=1024,
                     messages=[{"role": "user", "content": prompt}]
