@@ -1298,5 +1298,86 @@ def llm_keys_move(key_id):
     return redirect(url_for("llm_keys"))
 
 
+# ── Agent Marketplace ──────────────────────────────────────────────────────────
+
+@app.route("/agent-marketplace")
+@login_required
+def agent_marketplace():
+    category = request.args.get("category", "")
+    agents = db.list_marketplace_agents(category if category else None)
+    categories = db.list_marketplace_categories()
+    # Parse tools JSON for display
+    for a in agents:
+        if isinstance(a.get("tools"), str):
+            try:
+                a["tools"] = json.loads(a["tools"])
+            except Exception:
+                a["tools"] = []
+    investors = db.list_investor_sessions()
+    return render_template("agent_marketplace.html",
+                           agents=agents,
+                           categories=categories,
+                           selected_category=category,
+                           investors=investors,
+                           user=_current_user())
+
+
+@app.route("/agent-marketplace/<int:agent_id>/assign", methods=["POST"])
+@login_required
+def agent_marketplace_assign(agent_id):
+    investor_session_id = request.form.get("investor_session_id", type=int)
+    if not investor_session_id:
+        flash("Please select an investor.", "error")
+        return redirect(url_for("agent_marketplace"))
+    user = _current_user()
+    db.assign_agent_to_investor(agent_id, investor_session_id, user["id"])
+    agent = db.get_marketplace_agent(agent_id)
+    flash(f"Agent '{agent['name']}' assigned successfully.", "success")
+    return redirect(url_for("agent_marketplace"))
+
+
+@app.route("/agent-marketplace/<int:agent_id>/unassign", methods=["POST"])
+@login_required
+def agent_marketplace_unassign(agent_id):
+    investor_session_id = request.form.get("investor_session_id", type=int)
+    if investor_session_id:
+        db.unassign_agent_from_investor(agent_id, investor_session_id)
+    return redirect(request.referrer or url_for("agent_marketplace"))
+
+
+@app.route("/investor/agents")
+@investor_login_required
+def investor_agents():
+    inv = _current_investor()
+    sid = inv.get("session_id")
+    agents = db.get_assigned_agents(sid) if sid else []
+    for a in agents:
+        if isinstance(a.get("tools"), str):
+            try:
+                a["tools"] = json.loads(a["tools"])
+            except Exception:
+                a["tools"] = []
+    investor = db.get_investor_session(sid)
+    return render_template("investor_agents.html", agents=agents, investor=investor)
+
+
+@app.route("/investor/agents/<int:agent_id>/chat")
+@investor_login_required
+def investor_agent_chat(agent_id):
+    inv = _current_investor()
+    sid = inv.get("session_id")
+    agent = db.get_marketplace_agent(agent_id)
+    if not agent:
+        flash("Agent not found.", "error")
+        return redirect(url_for("investor_agents"))
+    # Verify agent is assigned to this investor
+    assigned_ids = db.get_investor_agent_ids(sid)
+    if agent_id not in assigned_ids:
+        flash("This agent is not assigned to you.", "error")
+        return redirect(url_for("investor_agents"))
+    investor = db.get_investor_session(sid)
+    return render_template("investor_agent_chat.html", agent=agent, investor=investor)
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

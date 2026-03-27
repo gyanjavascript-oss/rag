@@ -53,6 +53,9 @@
       <a href="{{ url_for('knowledge_base') }}" class="nav-item {% if request.endpoint in ['knowledge_base','kb_edit'] %}active{% endif %}">
         <span class="nav-icon">🧠</span> Knowledge Base
       </a>
+      <a href="{{ url_for('agent_marketplace') }}" class="nav-item {% if request.endpoint in ['agent_marketplace','agent_marketplace_assign'] %}active{% endif %}">
+        <span class="nav-icon">🤖</span> Agent Marketplace
+      </a>
       {% if user.role == 'admin' %}
       <a href="{{ url_for('team') }}" class="nav-item {% if request.endpoint == 'team' %}active{% endif %}">
         <span class="nav-icon">◉</span> Team

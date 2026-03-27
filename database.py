@@ -334,6 +334,37 @@ def init_db():
             )
         """)
 
+        # Agent Marketplace
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS marketplace_agents (
+                id          SERIAL PRIMARY KEY,
+                name        TEXT NOT NULL,
+                description TEXT NOT NULL,
+                category    TEXT NOT NULL DEFAULT 'General',
+                tools       TEXT NOT NULL DEFAULT '[]',
+                icon        TEXT DEFAULT '🤖',
+                source_ref  TEXT DEFAULT '',
+                is_active   INTEGER NOT NULL DEFAULT 1,
+                created_at  TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_assignments (
+                id                  SERIAL PRIMARY KEY,
+                agent_id            INTEGER NOT NULL,
+                investor_session_id INTEGER NOT NULL,
+                assigned_by         INTEGER,
+                assigned_at         TIMESTAMP DEFAULT NOW(),
+                UNIQUE(agent_id, investor_session_id),
+                FOREIGN KEY (agent_id) REFERENCES marketplace_agents(id) ON DELETE CASCADE,
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (assigned_by) REFERENCES users(id)
+            )
+        """)
+
+        # Seed marketplace agents
+        _seed_marketplace_agents(cur)
+
         # Migrations for columns added after initial release (IF NOT EXISTS is safe in PG 9.6+)
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS investor_session_id INTEGER REFERENCES investor_sessions(id)")
         cur.execute("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'")
@@ -459,6 +490,144 @@ def init_db():
         conn.commit()
     finally:
         put_db(conn)
+
+
+# ── Agent Marketplace seed ─────────────────────────────────────────────────────
+
+_MARKETPLACE_AGENTS = [
+    {
+        "name": "Document Analyzer",
+        "description": "Extracts and summarizes key information from fund documents. Identifies critical clauses, terms, and disclosures across LPAs, PPMs, and subscription agreements.",
+        "category": "Document Intelligence",
+        "tools": ["Document Search", "Text Extraction", "Summarization"],
+        "icon": "📄",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Risk Assessment Agent",
+        "description": "Identifies and evaluates risk factors across fund documentation. Reviews concentration risk, liquidity risk, leverage constraints, and key-person dependencies.",
+        "category": "Risk & Compliance",
+        "tools": ["Document Search", "Risk Scoring", "Report Generation"],
+        "icon": "⚠️",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "ESG Analysis Agent",
+        "description": "Reviews environmental, social, and governance policies embedded in fund documents. Flags ESG commitments, exclusion criteria, and reporting obligations.",
+        "category": "ESG",
+        "tools": ["Document Search", "Policy Review", "ESG Scoring"],
+        "icon": "🌿",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Legal Review Agent",
+        "description": "Reviews legal terms in LPA and subscription agreements. Highlights governance rights, LP protections, transfer restrictions, and default provisions.",
+        "category": "Legal",
+        "tools": ["Document Search", "Clause Extraction", "Legal Summarization"],
+        "icon": "⚖️",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Financial Performance Analyst",
+        "description": "Analyzes fund performance metrics including IRR, MOIC, DPI, RVPI, and TVPI. Provides context against benchmarks and identifies performance trends.",
+        "category": "Financial Analysis",
+        "tools": ["Document Search", "Data Analysis", "Benchmarking"],
+        "icon": "📈",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Fee Structure Analyzer",
+        "description": "Breaks down management fees, carried interest, waterfall mechanics, hurdle rates, and clawback provisions. Calculates net-of-fee return scenarios.",
+        "category": "Financial Analysis",
+        "tools": ["Document Search", "Fee Modeling", "Calculation Engine"],
+        "icon": "💰",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Compliance Checker",
+        "description": "Reviews regulatory compliance disclosures including AIFMD, Form ADV, SEC filings, and FATCA/CRS requirements. Flags potential compliance gaps.",
+        "category": "Risk & Compliance",
+        "tools": ["Document Search", "Regulatory Database", "Compliance Scoring"],
+        "icon": "✅",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Investment Strategy Analyzer",
+        "description": "Reviews the fund's investment thesis, target sectors, geographies, and deal sourcing strategy. Benchmarks against peer funds and market conditions.",
+        "category": "Strategy",
+        "tools": ["Document Search", "Market Research", "Peer Comparison"],
+        "icon": "🎯",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Portfolio Analytics Agent",
+        "description": "Analyzes portfolio company composition, sector diversification, stage distribution, and valuation methodology. Tracks follow-on reserves and portfolio construction.",
+        "category": "Financial Analysis",
+        "tools": ["Document Search", "Portfolio Modeling", "Visualization"],
+        "icon": "🗂️",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "DDQ Auto-Responder",
+        "description": "Automatically drafts professional responses to standard DDQ questions by searching fund documents and knowledge base. Trained on institutional DDQ formats.",
+        "category": "DDQ Automation",
+        "tools": ["Document Search", "Knowledge Base", "Draft Generation"],
+        "icon": "✍️",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Report Generator",
+        "description": "Creates structured investor reports including quarterly updates, capital call notices, and distribution notices by synthesizing data from fund documents.",
+        "category": "Reporting",
+        "tools": ["Document Search", "Template Engine", "PDF Generation"],
+        "icon": "📊",
+        "source_ref": "https://github.com/anthropics/skills",
+    },
+    {
+        "name": "Research Assistant",
+        "description": "Provides market context, sector analysis, and comparable fund benchmarking to support investment decision-making and due diligence processes.",
+        "category": "Research",
+        "tools": ["Web Search", "Document Search", "Summarization"],
+        "icon": "🔬",
+        "source_ref": "https://github.com/anthropics/skills",
+    },
+    {
+        "name": "Tax & Structure Advisor",
+        "description": "Reviews fund structure for tax efficiency, blocker entity usage, treaty eligibility, UBTI considerations, and ECI exposure for international investors.",
+        "category": "Legal",
+        "tools": ["Document Search", "Tax Analysis", "Structure Review"],
+        "icon": "🏛️",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "LP Rights Monitor",
+        "description": "Tracks and summarizes LP rights including LPAC membership, co-investment rights, key-person protections, no-fault divorce provisions, and reporting obligations.",
+        "category": "Legal",
+        "tools": ["Document Search", "Rights Extraction", "Alert System"],
+        "icon": "🛡️",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+    {
+        "name": "Valuation Review Agent",
+        "description": "Reviews valuation methodology, fair value policies, independent valuation practices, and marks against industry standards and IPEV guidelines.",
+        "category": "Financial Analysis",
+        "tools": ["Document Search", "Valuation Models", "IPEV Guidelines"],
+        "icon": "🔍",
+        "source_ref": "https://github.com/ashishpatel26/500-AI-Agents-Projects",
+    },
+]
+
+
+def _seed_marketplace_agents(cur):
+    for agent in _MARKETPLACE_AGENTS:
+        cur.execute("""
+            INSERT INTO marketplace_agents (name, description, category, tools, icon, source_ref)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+        """, (
+            agent["name"], agent["description"], agent["category"],
+            json.dumps(agent["tools"]), agent["icon"], agent["source_ref"]
+        ))
 
 
 # ── Auth helpers ───────────────────────────────────────────────────────────────
@@ -1862,5 +2031,104 @@ def get_llm_usage_stats() -> list:
         rows = cur.fetchall()
         # Only return rows that have had usage
         return [_row(dict(r)) for r in rows if r["requests"] > 0]
+    finally:
+        put_db(conn)
+
+
+# ── Agent Marketplace ──────────────────────────────────────────────────────────
+
+def list_marketplace_agents(category: str = None) -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        if category:
+            cur.execute("""
+                SELECT * FROM marketplace_agents WHERE is_active=1 AND category=%s
+                ORDER BY category, name
+            """, (category,))
+        else:
+            cur.execute("SELECT * FROM marketplace_agents WHERE is_active=1 ORDER BY category, name")
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
+
+
+def get_marketplace_agent(agent_id: int) -> dict:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM marketplace_agents WHERE id=%s", (agent_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else None
+    finally:
+        put_db(conn)
+
+
+def assign_agent_to_investor(agent_id: int, investor_session_id: int, assigned_by: int) -> bool:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO agent_assignments (agent_id, investor_session_id, assigned_by)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (agent_id, investor_session_id) DO NOTHING
+        """, (agent_id, investor_session_id, assigned_by))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        put_db(conn)
+
+
+def unassign_agent_from_investor(agent_id: int, investor_session_id: int) -> bool:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM agent_assignments WHERE agent_id=%s AND investor_session_id=%s
+        """, (agent_id, investor_session_id))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        put_db(conn)
+
+
+def get_assigned_agents(investor_session_id: int) -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT ma.*, aa.assigned_at
+            FROM marketplace_agents ma
+            JOIN agent_assignments aa ON aa.agent_id = ma.id
+            WHERE aa.investor_session_id=%s AND ma.is_active=1
+            ORDER BY ma.category, ma.name
+        """, (investor_session_id,))
+        return [_row(dict(r)) for r in cur.fetchall()]
+    finally:
+        put_db(conn)
+
+
+def get_investor_agent_ids(investor_session_id: int) -> set:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT agent_id FROM agent_assignments WHERE investor_session_id=%s", (investor_session_id,))
+        return {r[0] for r in cur.fetchall()}
+    finally:
+        put_db(conn)
+
+
+def list_marketplace_categories() -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT category FROM marketplace_agents WHERE is_active=1 ORDER BY category")
+        return [r[0] for r in cur.fetchall()]
     finally:
         put_db(conn)

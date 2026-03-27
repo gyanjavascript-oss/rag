@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Agents · Investor Portal</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f172a; color: #e2e8f0; font-family: system-ui, sans-serif; min-height: 100vh; }
+
+    /* Sidebar matches investor_portal.html */
+    .portal-layout { display: flex; min-height: 100vh; }
+    .portal-sidebar {
+      width: 260px; background: #1e293b; border-right: 1px solid #334155;
+      display: flex; flex-direction: column; flex-shrink: 0;
+    }
+    .portal-brand { padding: 1.25rem 1.5rem; border-bottom: 1px solid #334155; }
+    .portal-brand-name { font-size: 1.1rem; font-weight: 700; color: #f1f5f9; }
+    .portal-brand-sub { font-size: .75rem; color: #64748b; margin-top: .15rem; }
+    .portal-nav { flex: 1; padding: 1rem 0; }
+    .portal-nav-item {
+      display: flex; align-items: center; gap: .75rem;
+      padding: .65rem 1.5rem; color: #94a3b8; text-decoration: none;
+      font-size: .9rem; transition: all .15s;
+    }
+    .portal-nav-item:hover, .portal-nav-item.active { background: #0f172a; color: #f1f5f9; }
+    .portal-nav-item.active { border-right: 2px solid #3b82f6; }
+    .portal-user { padding: 1rem 1.5rem; border-top: 1px solid #334155; }
+    .portal-user-name { font-size: .85rem; font-weight: 600; color: #f1f5f9; }
+    .portal-logout { font-size: .75rem; color: #64748b; text-decoration: none; }
+    .portal-logout:hover { color: #94a3b8; }
+
+    .portal-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .portal-topbar {
+      background: #1e293b; border-bottom: 1px solid #334155;
+      padding: 1rem 1.5rem; display: flex; align-items: center; justify-content: space-between;
+    }
+    .portal-topbar-title { font-size: 1.1rem; font-weight: 600; color: #f1f5f9; }
+
+    .agents-body { padding: 1.5rem; overflow-y: auto; flex: 1; }
+
+    .agents-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+    .agent-card {
+      background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+      padding: 1.25rem; display: flex; flex-direction: column; gap: .75rem;
+      transition: border-color .15s;
+    }
+    .agent-card:hover { border-color: #3b82f6; }
+    .agent-card-header { display: flex; align-items: flex-start; gap: .75rem; }
+    .agent-icon { font-size: 2rem; line-height: 1; flex-shrink: 0; }
+    .agent-name { font-size: 1rem; font-weight: 600; color: #f1f5f9; }
+    .agent-cat {
+      display: inline-block; font-size: .7rem; font-weight: 500;
+      padding: .15rem .5rem; border-radius: 999px; margin-top: .25rem;
+      background: #0f172a; color: #64748b; border: 1px solid #334155;
+    }
+    .agent-desc { font-size: .83rem; color: #94a3b8; line-height: 1.55; flex: 1; }
+    .agent-tools { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .agent-tool {
+      font-size: .72rem; padding: .2rem .55rem; border-radius: 4px;
+      background: #0f172a; color: #60a5fa; border: 1px solid #1e3a5f;
+    }
+    .agent-launch-btn {
+      display: block; text-align: center; padding: .6rem 1rem;
+      background: #3b82f6; color: #fff; border-radius: 8px;
+      text-decoration: none; font-size: .85rem; font-weight: 500;
+      transition: background .15s;
+    }
+    .agent-launch-btn:hover { background: #2563eb; }
+
+    .empty-state { text-align: center; color: #475569; padding: 4rem 2rem; }
+    .empty-state-icon { font-size: 3rem; margin-bottom: 1rem; }
+    .empty-state-text { font-size: 1rem; margin-bottom: .5rem; color: #64748b; }
+    .empty-state-sub { font-size: .85rem; color: #475569; }
+  </style>
+</head>
+<body>
+<div class="portal-layout">
+  <!-- Sidebar -->
+  <aside class="portal-sidebar">
+    <div class="portal-brand">
+      <div class="portal-brand-name">Investor Portal</div>
+      <div class="portal-brand-sub">Due Diligence Platform</div>
+    </div>
+    <nav class="portal-nav">
+      <a href="{{ url_for('investor_portal') }}" class="portal-nav-item">💬 Q&amp;A Chat</a>
+      <a href="{{ url_for('investor_agents') }}" class="portal-nav-item active">🤖 My Agents</a>
+      <a href="{{ url_for('investor_profile') }}" class="portal-nav-item">👤 Profile</a>
+    </nav>
+    <div class="portal-user">
+      <div class="portal-user-name">{{ investor.investor_name }}</div>
+      <div style="display:flex;gap:.5rem;align-items:center;margin-top:.35rem;">
+        <a href="{{ url_for('investor_profile') }}" class="portal-logout">Profile</a>
+        <span style="color:rgba(255,255,255,.2);">·</span>
+        <a href="{{ url_for('investor_logout') }}" class="portal-logout">Sign out</a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="portal-main">
+    <div class="portal-topbar">
+      <div class="portal-topbar-title">🤖 My Agents</div>
+    </div>
+
+    <div class="agents-body">
+      {% if agents %}
+      <div class="agents-grid">
+        {% for agent in agents %}
+        <div class="agent-card">
+          <div class="agent-card-header">
+            <div class="agent-icon">{{ agent.icon }}</div>
+            <div>
+              <div class="agent-name">{{ agent.name }}</div>
+              <span class="agent-cat">{{ agent.category }}</span>
+            </div>
+          </div>
+          <div class="agent-desc">{{ agent.description }}</div>
+          <div class="agent-tools">
+            {% for tool in agent.tools %}
+            <span class="agent-tool">{{ tool }}</span>
+            {% endfor %}
+          </div>
+          <a href="{{ url_for('investor_agent_chat', agent_id=agent.id) }}" class="agent-launch-btn">
+            Launch Agent →
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon">🤖</div>
+        <div class="empty-state-text">No agents assigned yet</div>
+        <div class="empty-state-sub">Your fund manager will assign relevant agents to assist your due diligence process.</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+</body>
+</html>
