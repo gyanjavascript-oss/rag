@@ -1000,6 +1000,8 @@ def investor_rename_chat(conv_id):
 def investor_chat_stream(conv_id):
     raw_question = request.args.get("q", "").strip()
     agent_id = request.args.get("agent_id", type=int)
+    active_tools_param = request.args.get("tools", "").strip()
+    active_tools = [t.strip() for t in active_tools_param.split(",") if t.strip()] if active_tools_param else None
     inv = _current_investor()
 
     if not raw_question:
@@ -1044,6 +1046,7 @@ def investor_chat_stream(conv_id):
             investor_name=investor_name,
             is_investor=True,
             agent_memories=agent_memories,
+            allowed_tools=active_tools,
         ):
             yield chunk
             if '"type": "result"' in chunk or '"type":"result"' in chunk:

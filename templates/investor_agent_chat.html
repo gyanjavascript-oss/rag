@@ -8,6 +8,7 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0f172a; color: #e2e8f0; font-family: system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    .main-layout { flex: 1; display: flex; overflow: hidden; }
 
     .agent-header {
       background: #1e293b; border-bottom: 1px solid #334155;
@@ -137,6 +138,42 @@
     .msg-sources a { color: #60a5fa; text-decoration: none; }
     .msg-sources a:hover { background: #1e3a5f; }
     .msg-sources span { color: #64748b; }
+
+    /* Right tools panel */
+    .tools-panel {
+      width: 240px; flex-shrink: 0; background: #1e293b; border-left: 1px solid #334155;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .tools-panel-header {
+      padding: .85rem 1rem .6rem; border-bottom: 1px solid #334155;
+      font-size: .72rem; font-weight: 700; color: #64748b;
+      text-transform: uppercase; letter-spacing: .07em;
+    }
+    .tools-panel-body { flex: 1; overflow-y: auto; padding: .75rem .85rem; display: flex; flex-direction: column; gap: .5rem; }
+    .tool-row {
+      display: flex; align-items: center; gap: .6rem;
+      background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+      padding: .55rem .75rem; cursor: pointer; transition: border-color .15s;
+      user-select: none;
+    }
+    .tool-row:hover { border-color: #475569; }
+    .tool-row.disabled { opacity: .45; }
+    .tool-row-icon { font-size: 1rem; flex-shrink: 0; }
+    .tool-row-info { flex: 1; min-width: 0; }
+    .tool-row-name { font-size: .78rem; font-weight: 600; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tool-row-desc { font-size: .68rem; color: #64748b; margin-top: .1rem; line-height: 1.3; }
+    .tool-toggle {
+      width: 32px; height: 18px; border-radius: 9px; background: #334155;
+      position: relative; flex-shrink: 0; transition: background .2s;
+    }
+    .tool-toggle::after {
+      content: ''; position: absolute; top: 3px; left: 3px;
+      width: 12px; height: 12px; border-radius: 50%; background: #64748b;
+      transition: transform .2s, background .2s;
+    }
+    .tool-row:not(.disabled) .tool-toggle { background: #1d4ed8; }
+    .tool-row:not(.disabled) .tool-toggle::after { transform: translateX(14px); background: #fff; }
+    .tools-panel-footer { padding: .75rem .85rem; border-top: 1px solid #334155; font-size: .72rem; color: #475569; line-height: 1.4; }
   </style>
 </head>
 <body>
@@ -150,6 +187,9 @@
     <div class="agent-header-cat">{{ agent.category }} · Assigned to {{ investor.investor_name }}</div>
   </div>
 </div>
+
+<div class="main-layout">
+<div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
 
 <!-- Chat messages -->
 <div class="chat-area" id="chatArea">
@@ -191,6 +231,80 @@
   ></textarea>
   <button class="chat-send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
 </div>
+
+</div><!-- end chat column -->
+
+<!-- Right: Tools panel -->
+<aside class="tools-panel">
+  <div class="tools-panel-header">Available Tools</div>
+  <div class="tools-panel-body" id="toolsPanel"></div>
+  <div class="tools-panel-footer">Toggle tools on/off. Disabled tools will not be used when answering.</div>
+</aside>
+
+</div><!-- end main-layout -->
+
+<script>
+// Tool definitions for this agent
+const AGENT_TOOLS = {{ agent.tools | tojson }};
+
+const TOOL_META = {
+  search_fund_documents:    { icon: '📄', name: 'Fund Documents',      desc: 'Search fund docs, LPA, PPM, financials' },
+  search_investor_documents:{ icon: '👤', name: 'Your Documents',      desc: 'Search your uploaded investor docs' },
+  list_available_documents: { icon: '📋', name: 'List Documents',      desc: 'See all documents available to you' },
+  find_similar_questions:   { icon: '💬', name: 'Similar Questions',   desc: 'Find previously answered questions' },
+  web_search:               { icon: '🔍', name: 'Web Search',          desc: 'Search the web for current data' },
+  browse_url:               { icon: '🌐', name: 'URL Browser',         desc: 'Read a web page for detailed info' },
+};
+
+const STORAGE_KEY = `agent_tools_${{{ agent.id }}}`;
+
+function loadEnabledTools() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (Array.isArray(saved)) return saved;
+  } catch(e) {}
+  return [...AGENT_TOOLS]; // all enabled by default
+}
+
+function saveEnabledTools(enabled) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(enabled));
+}
+
+let enabledTools = loadEnabledTools();
+
+function renderToolsPanel() {
+  const panel = document.getElementById('toolsPanel');
+  if (!AGENT_TOOLS.length) {
+    panel.innerHTML = '<div style="color:#475569;font-size:.78rem;">No tools configured for this agent.</div>';
+    return;
+  }
+  panel.innerHTML = AGENT_TOOLS.map(tool => {
+    const meta = TOOL_META[tool] || { icon: '⚙️', name: tool, desc: '' };
+    const on = enabledTools.includes(tool);
+    return `<div class="tool-row ${on ? '' : 'disabled'}" onclick="toggleTool('${tool}')" title="${on ? 'Click to disable' : 'Click to enable'}">
+      <span class="tool-row-icon">${meta.icon}</span>
+      <div class="tool-row-info">
+        <div class="tool-row-name">${meta.name}</div>
+        ${meta.desc ? `<div class="tool-row-desc">${meta.desc}</div>` : ''}
+      </div>
+      <div class="tool-toggle"></div>
+    </div>`;
+  }).join('');
+}
+
+function toggleTool(tool) {
+  if (enabledTools.includes(tool)) {
+    if (enabledTools.length === 1) return; // keep at least one
+    enabledTools = enabledTools.filter(t => t !== tool);
+  } else {
+    enabledTools.push(tool);
+  }
+  saveEnabledTools(enabledTools);
+  renderToolsPanel();
+}
+
+renderToolsPanel();
+</script>
 
 <script>
   const AGENT_NAME = {{ agent.name | tojson }};
@@ -357,7 +471,8 @@
       let fullText = '';
       let stepCount = 0;
 
-      const es = new EventSource(`/investor/chat/${CONV_ID}/stream?q=${encodeURIComponent(contextualQ)}&agent_id=${AGENT_ID}`);
+      const toolsParam = enabledTools.length ? '&tools=' + encodeURIComponent(enabledTools.join(',')) : '';
+      const es = new EventSource(`/investor/chat/${CONV_ID}/stream?q=${encodeURIComponent(contextualQ)}&agent_id=${AGENT_ID}${toolsParam}`);
 
       es.onmessage = e => {
         let data;
