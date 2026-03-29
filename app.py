@@ -29,6 +29,17 @@ def clean_question_filter(text: str) -> str:
     q = _re.sub(r'^\[[^\]]+\]:\s*', '', (text or '')).strip()
     return (q[0].upper() + q[1:]) if q else (text or '')
 
+@app.template_filter('from_json')
+def from_json_filter(value):
+    """Parse a JSON string into a Python object for use in templates."""
+    if not value:
+        return []
+    try:
+        import json as _json
+        return _json.loads(value)
+    except Exception:
+        return []
+
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 FUND_DOCS_FOLDER = os.path.join(os.path.dirname(__file__), "documents")
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".doc"}
@@ -359,31 +370,58 @@ def documents():
 @app.route("/documents/upload", methods=["POST"])
 @login_required
 def upload_document():
-    if "file" not in request.files:
+    """Legacy multi-file form POST — kept for fallback."""
+    files = request.files.getlist("file")
+    if not files or all(f.filename == "" for f in files):
         flash("No file selected.", "error")
         return redirect(url_for("documents"))
-
-    file = request.files["file"]
-    doc_name = request.form.get("name", "").strip() or file.filename
     doc_type = request.form.get("doc_type", "Other")
+    user = _current_user()
+    ok = 0
+    for file in files:
+        if not file.filename or not _allowed(file.filename):
+            continue
+        doc_name = secure_filename(file.filename)
+        filepath = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4().hex}_{doc_name}")
+        file.save(filepath)
+        try:
+            dp.ingest_fund_document(filepath, doc_name, doc_type, user["id"], run_ai=True)
+            ok += 1
+        except Exception:
+            pass
+    flash(f'{ok} document{"s" if ok != 1 else ""} uploaded.', "success")
+    return redirect(url_for("documents"))
 
-    if not file.filename or not _allowed(file.filename):
-        flash("Unsupported file type. Allowed: PDF, DOCX, TXT, MD", "error")
-        return redirect(url_for("documents"))
 
-    filename = secure_filename(file.filename)
-    unique_name = f"{uuid.uuid4().hex}_{filename}"
-    filepath = os.path.join(UPLOAD_FOLDER, unique_name)
+@app.route("/documents/upload-one", methods=["POST"])
+@login_required
+def upload_document_one():
+    """Upload and AI-process a single file. Returns JSON for per-file AJAX progress."""
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"status": "error", "message": "No file"}), 400
+    if not _allowed(file.filename):
+        return jsonify({"status": "error", "message": "Unsupported file type"}), 400
+
+    doc_type = request.form.get("doc_type", "Other")
+    user = _current_user()
+    doc_name = secure_filename(file.filename)
+    filepath = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4().hex}_{doc_name}")
     file.save(filepath)
 
     try:
-        user = _current_user()
-        doc_id = dp.ingest_fund_document(filepath, doc_name, doc_type, user["id"])
-        flash(f'Document "{doc_name}" uploaded and indexed successfully.', "success")
+        doc_id = dp.ingest_fund_document(filepath, doc_name, doc_type, user["id"], run_ai=True)
+        doc = db.get_fund_document(doc_id)
+        return jsonify({
+            "status": "ok",
+            "doc_id": doc_id,
+            "doc_name": doc_name,
+            "ai_doc_type": doc.get("ai_doc_type") or doc_type,
+            "summary": (doc.get("summary") or "")[:120],
+            "page_count": doc.get("page_count") or 0,
+        })
     except Exception as e:
-        flash(f"Error processing document: {e}", "error")
-
-    return redirect(url_for("documents"))
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/documents/<int:doc_id>/delete", methods=["POST"])
@@ -420,15 +458,15 @@ def investor_view_document(doc_id):
     assigned_ids = db.get_assigned_document_ids(inv["session_id"])
     if doc_id not in assigned_ids:
         return "Access denied", 403
-    conn = db.get_db()
-    doc = conn.execute("SELECT * FROM fund_documents WHERE id=?", (doc_id,)).fetchone()
-    conn.close()
+    doc = db.get_fund_document(doc_id)
     if not doc:
         return "Not found", 404
-    filepath = doc["filepath"]
-    if not filepath or not os.path.exists(os.path.join(UPLOAD_FOLDER, os.path.basename(filepath))):
+    filepath = doc.get("filepath", "")
+    if not filepath:
         return "File not available", 404
-    full_path = os.path.join(UPLOAD_FOLDER, os.path.basename(filepath))
+    full_path = filepath if os.path.isabs(filepath) else os.path.join(UPLOAD_FOLDER, os.path.basename(filepath))
+    if not os.path.exists(full_path):
+        return "File not available", 404
     return send_file(full_path, as_attachment=False)
 
 
@@ -1367,11 +1405,14 @@ def llm_keys_move(key_id):
 
 # ── Custom Agent Builder ───────────────────────────────────────────────────────
 
-CUSTOM_AGENT_TOOLS = [
-    "Document Search", "Web Search", "URL Browser",
-    "Summarization", "Data Analysis", "Report Generation",
-    "Knowledge Base", "Draft Generation",
-]
+CUSTOM_AGENT_TOOLS = {
+    "web_search":               "🔍 Web Search",
+    "browse_url":               "🌐 URL Browser",
+    "search_fund_documents":    "📄 Fund Document Search",
+    "search_investor_documents":"👤 Investor Document Search",
+    "list_available_documents": "📋 List Documents",
+    "find_similar_questions":   "💬 Find Similar Questions",
+}
 
 @app.route("/custom-agents")
 @login_required
@@ -1465,6 +1506,7 @@ def custom_agent_stream(agent_id):
     # Apply user prompt template: replace {{input}} with the actual question
     user_prompt_tpl = agent.get("user_prompt") or ""
     question_for_llm = user_prompt_tpl.replace("{{input}}", question).strip() if user_prompt_tpl else question
+    agent_tools = agent.get("tools") or []
 
     def generate():
         full_answer = ""
@@ -1474,6 +1516,7 @@ def custom_agent_stream(agent_id):
             conversation_history=[],
             is_investor=False,
             custom_system_prompt=custom_prompt or None,
+            allowed_tools=agent_tools or None,
         ):
             yield chunk
             if '"type": "result"' in chunk or '"type":"result"' in chunk:
@@ -1545,12 +1588,14 @@ def custom_agent_api_run(api_key):
     custom_prompt = agent.get("system_prompt") or ""
     user_prompt_tpl = agent.get("user_prompt") or ""
     question_for_llm = user_prompt_tpl.replace("{{input}}", question).strip() if user_prompt_tpl else question
+    agent_tools = agent.get("tools") or []
     from agent import answer_question
     result = answer_question(
         question=question_for_llm,
         conversation_history=[],
         is_investor=False,
         custom_system_prompt=custom_prompt or None,
+        allowed_tools=agent_tools or None,
     )
 
     answer = result.get("answer", "")
@@ -1627,19 +1672,20 @@ def cron_tick():
             q = sched["input_text"]
             question_for_llm = user_prompt_tpl.replace("{{input}}", q).strip() if user_prompt_tpl else q
 
+            # Parse agent tools
+            tools = sched.get("tools") or []
+            if isinstance(tools, str):
+                try: tools = json.loads(tools)
+                except Exception: tools = []
+
             result = answer_question(
                 question=question_for_llm,
                 conversation_history=[],
                 is_investor=False,
                 custom_system_prompt=custom_prompt or None,
+                allowed_tools=tools or None,
             )
             answer = result.get("answer", "")
-
-            # Parse tools for webhook
-            tools = sched.get("tools") or []
-            if isinstance(tools, str):
-                try: tools = json.loads(tools)
-                except Exception: tools = []
             agent_obj = {
                 "id": sched["agent_id"], "output_type": sched.get("output_type", "chat"),
                 "output_webhook_url": sched.get("output_webhook_url", ""),

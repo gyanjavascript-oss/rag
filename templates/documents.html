@@ -1,117 +1,396 @@
 {% extends "base.html" %}
 {% block title %}Fund Documents{% endblock %}
 
+{% block head %}
+<style>
+.doc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:1.25rem; margin-top:1.5rem; }
+.doc-card {
+  background:var(--white); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:var(--shadow); padding:1.25rem; display:flex; flex-direction:column; gap:.75rem;
+  transition:box-shadow .15s,border-color .15s;
+}
+.doc-card:hover { box-shadow:0 4px 20px rgba(0,0,0,.1); border-color:#c0c8dd; }
+.doc-card-head { display:flex; align-items:flex-start; gap:.75rem; }
+.doc-icon { width:42px;height:42px;border-radius:9px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0; }
+.doc-title { font-size:.9rem;font-weight:700;color:var(--navy);line-height:1.3; }
+.doc-badges { display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.3rem; }
+.doc-badge { font-size:.68rem;font-weight:600;padding:.15rem .55rem;border-radius:999px;text-transform:uppercase;letter-spacing:.04em; }
+.badge-lpa,.badge-limited\ partnership\ agreement { background:#dbeafe;color:#1d4ed8; }
+.badge-ppm { background:#ede9fe;color:#5b21b6; }
+.badge-presentation { background:#fef3c7;color:#92400e; }
+.badge-policy { background:#dcfce7;color:#166534; }
+.badge-memo { background:#e0f2fe;color:#0369a1; }
+.badge-tax,.badge-tax\ document { background:#fee2e2;color:#dc2626; }
+.badge-financial\ statements,.badge-audit\ report { background:#d1fae5;color:#065f46; }
+.badge-side\ letter { background:#fce7f3;color:#9d174d; }
+.badge-ddq { background:#fef9c3;color:#854d0e; }
+.badge-other { background:#f1f5f9;color:#475569; }
+.badge-ai { background:#f0f4ff;color:var(--accent);border:1px solid #c7d7fa;font-size:.65rem; }
+.doc-summary { font-size:.78rem;color:var(--muted);line-height:1.6; display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden; }
+.doc-topics { display:flex;flex-wrap:wrap;gap:.3rem; }
+.doc-topic { font-size:.68rem;padding:.15rem .45rem;border-radius:4px;background:var(--bg2);border:1px solid var(--border);color:var(--muted); }
+.doc-meta { font-size:.72rem;color:var(--muted);display:flex;gap:.75rem;flex-wrap:wrap;align-items:center; }
+.doc-actions { display:flex;gap:.5rem;margin-top:.25rem; }
+
+/* Upload drop zone */
+.upload-zone {
+  border:2px dashed var(--border); border-radius:10px; padding:2rem 1.5rem;
+  text-align:center; cursor:pointer; transition:all .2s; background:var(--bg2);
+}
+.upload-zone:hover,.upload-zone.drag-over { border-color:var(--accent);background:#f0f4ff; }
+.upload-zone input[type=file] { display:none; }
+.upload-zone-icon { font-size:2.5rem; margin-bottom:.5rem; }
+.upload-zone-text { font-size:.9rem;font-weight:600;color:var(--navy); }
+.upload-zone-sub { font-size:.78rem;color:var(--muted);margin-top:.25rem; }
+.file-list { display:flex;flex-direction:column;gap:.35rem;margin-top:.85rem; }
+.file-item { display:flex;align-items:center;gap:.6rem;background:var(--white);border:1px solid var(--border);border-radius:6px;padding:.45rem .7rem;font-size:.8rem; }
+.file-item-name { flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text); }
+.file-item-size { font-size:.72rem;color:var(--muted);flex-shrink:0; }
+.file-item-remove { color:var(--muted);cursor:pointer;font-size:.9rem;flex-shrink:0; }
+.file-item-remove:hover { color:#dc2626; }
+.upload-progress { margin-top:.75rem;display:none; }
+.upload-progress-bar { height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-bottom:.35rem; }
+.upload-progress-fill { height:100%;background:var(--accent);border-radius:3px;transition:width .3s; }
+.upload-progress-label { font-size:.75rem;color:var(--muted);text-align:center; }
+
+/* Per-file queue */
+.q-item { display:flex;flex-direction:column;gap:.2rem;background:var(--white);border:1px solid var(--border);border-radius:8px;padding:.6rem .85rem; }
+.q-item-row { display:flex;align-items:center;gap:.6rem; }
+.q-item-icon { font-size:1rem;flex-shrink:0; }
+.q-item-name { flex:1;font-size:.82rem;font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.q-item-size { font-size:.72rem;color:var(--muted);flex-shrink:0; }
+.q-item-status { font-size:.75rem;flex-shrink:0;min-width:7rem;text-align:right; }
+.q-status-queued { color:var(--muted); }
+.q-status-uploading { color:var(--accent); }
+.q-status-ai { color:#7c3aed; }
+.q-status-done { color:#16a34a; }
+.q-status-error { color:#dc2626; }
+.q-item-bar { height:3px;background:#e2e8f0;border-radius:2px;overflow:hidden;margin-top:.1rem; }
+.q-item-bar-fill { height:100%;background:var(--accent);border-radius:2px;transition:width .4s; }
+.q-item-meta { font-size:.72rem;color:var(--muted);line-height:1.4;margin-top:.15rem; }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="page-header">
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
   <div>
     <h1 class="page-title">Fund Documents</h1>
-    <p class="page-sub">Upload and manage the documents used to answer investor questions.</p>
+    <p class="page-sub">Upload documents — AI auto-detects type, generates summaries, and enables hybrid search.</p>
   </div>
-  <button class="btn-primary" onclick="document.getElementById('uploadModal').style.display='flex'">
-    + Upload Document
-  </button>
+  <button class="btn btn-primary" onclick="document.getElementById('uploadModal').style.display='flex'">+ Upload Documents</button>
 </div>
 
 {% if not documents %}
-<div class="empty-card">
+<div class="empty-card" style="margin-top:2rem;">
   <div class="empty-icon">◫</div>
   <h3>No documents yet</h3>
-  <p>Upload your fund's LPA, presentations, policies, and memos to enable AI-powered Q&A.</p>
-  <button class="btn-primary" onclick="document.getElementById('uploadModal').style.display='flex'">
-    Upload First Document
-  </button>
-  {% if user.role == 'admin' %}
-  <p class="mt-2" style="color:var(--muted); font-size:.85rem;">
-    Or place files in the <code>/documents</code> folder and
-    <a href="#" onclick="bulkIngest(); return false;">bulk ingest</a>.
-  </p>
-  {% endif %}
+  <p>Upload your fund's LPA, PPM, financials, and memos to enable AI-powered Q&A.</p>
+  <button class="btn btn-primary" onclick="document.getElementById('uploadModal').style.display='flex'" style="margin-top:1rem;">Upload First Document</button>
 </div>
 {% else %}
-<div class="doc-type-legend">
-  {% for dtype in ['LPA','Presentation','Policy','Memo','Tax','Other'] %}
-  <span class="type-badge type-{{ dtype|lower }}">{{ dtype }}</span>
-  {% endfor %}
-</div>
+<div class="doc-grid">
+  {% for doc in documents %}
+  {% set dtype = (doc.ai_doc_type or doc.doc_type or 'Other')|lower %}
+  <div class="doc-card">
+    <div class="doc-card-head">
+      <div class="doc-icon">
+        {% if 'lpa' in dtype or 'partnership' in dtype %}📋
+        {% elif 'ppm' in dtype or 'placement' in dtype %}📑
+        {% elif 'financial' in dtype or 'audit' in dtype %}📊
+        {% elif 'presentation' in dtype %}📽
+        {% elif 'tax' in dtype %}🧾
+        {% elif 'ddq' in dtype %}❓
+        {% elif 'side letter' in dtype %}✉️
+        {% else %}📄{% endif %}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div class="doc-title">{{ doc.name }}</div>
+        <div class="doc-badges">
+          {% if doc.ai_doc_type and doc.ai_doc_type != doc.doc_type %}
+          <span class="doc-badge badge-{{ doc.ai_doc_type|lower|replace(' ','-') }}">{{ doc.ai_doc_type }}</span>
+          <span class="doc-badge badge-ai">🤖 AI</span>
+          {% else %}
+          <span class="doc-badge badge-{{ doc.doc_type|lower|replace(' ','-') }}">{{ doc.doc_type }}</span>
+          {% endif %}
+          {% if doc.page_count %}<span class="doc-badge" style="background:#f1f5f9;color:#64748b;">{{ doc.page_count }}p</span>{% endif %}
+        </div>
+      </div>
+    </div>
 
-<div class="card">
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Document</th>
-        <th>Type</th>
-        <th>Uploaded by</th>
-        <th>Date</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for doc in documents %}
-      <tr>
-        <td>
-          <div class="doc-name">{{ doc.name }}</div>
-          {% if doc.content %}
-          <div class="doc-preview">{{ doc.content[:100] }}…</div>
-          {% endif %}
-        </td>
-        <td><span class="type-badge type-{{ doc.doc_type|lower }}">{{ doc.doc_type }}</span></td>
-        <td>{{ doc.uploaded_by_name or '—' }}</td>
-        <td>{{ doc.uploaded_at[:10] }}</td>
-        <td style="display:flex;gap:.4rem;align-items:center;">
-          {% if doc.filepath %}
-          <a href="{{ url_for('view_document', doc_id=doc.id) }}" target="_blank" class="btn-outline btn-sm">View</a>
-          {% endif %}
-          <form method="POST" action="{{ url_for('delete_document', doc_id=doc.id) }}"
-                onsubmit="return confirm('Remove this document from the index?')">
-            <button class="btn-danger-sm">Remove</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+    {% if doc.summary %}
+    <div class="doc-summary">{{ doc.summary }}</div>
+    {% elif doc.content %}
+    <div class="doc-summary" style="-webkit-line-clamp:2;">{{ doc.content[:180] }}…</div>
+    {% endif %}
+
+    {% if doc.key_topics %}
+    {% set topics = doc.key_topics | from_json %}
+    {% if topics %}
+    <div class="doc-topics">
+      {% for t in topics[:5] %}<span class="doc-topic">{{ t }}</span>{% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+
+    <div class="doc-meta">
+      <span>{{ doc.uploaded_by_name or '—' }}</span>
+      <span>·</span>
+      <span>{{ doc.uploaded_at[:10] if doc.uploaded_at else '' }}</span>
+    </div>
+
+    <div class="doc-actions">
+      {% if doc.filepath %}
+      <a href="{{ url_for('view_document', doc_id=doc.id) }}" target="_blank" class="btn btn-outline" style="font-size:.78rem;padding:.3rem .75rem;">View</a>
+      {% endif %}
+      <form method="POST" action="{{ url_for('delete_document', doc_id=doc.id) }}" style="margin:0;" onsubmit="return confirm('Remove this document?')">
+        <button class="btn" style="font-size:.78rem;padding:.3rem .75rem;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;">Remove</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
 </div>
 {% endif %}
 
 <!-- Upload Modal -->
 <div id="uploadModal" class="modal-overlay" style="display:none;">
-  <div class="modal">
+  <div class="modal" style="max-width:560px;width:100%;">
     <div class="modal-header">
-      <h3>Upload Fund Document</h3>
-      <button class="modal-close" onclick="document.getElementById('uploadModal').style.display='none'">✕</button>
+      <h3>Upload Fund Documents</h3>
+      <button class="modal-close" id="modalCloseBtn" onclick="closeUpload()">✕</button>
     </div>
-    <form method="POST" action="{{ url_for('upload_document') }}" enctype="multipart/form-data">
-      <div class="field-group">
-        <label>Document Name</label>
-        <input type="text" name="name" placeholder="e.g. Limited Partnership Agreement v3.2">
-        <div class="field-hint">Leave blank to use filename</div>
+
+    <div style="padding:1.25rem;" id="uploadSetup">
+      <!-- Drop zone -->
+      <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()"
+           ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.doc,.txt,.md"
+               onchange="onFilesSelected(this.files)">
+        <div class="upload-zone-icon">📂</div>
+        <div class="upload-zone-text">Drop files here or click to browse</div>
+        <div class="upload-zone-sub">PDF, DOCX, TXT, Markdown · Up to 5 files at a time</div>
       </div>
-      <div class="field-group">
-        <label>Document Type</label>
-        <select name="doc_type">
+
+      <!-- Staged file list -->
+      <div class="file-list" id="fileList"></div>
+
+      <!-- Doc type -->
+      <div id="docTypeRow" style="margin-top:1rem;display:none;">
+        <label style="font-size:.8rem;font-weight:600;color:var(--navy);margin-bottom:.35rem;display:block;">
+          Document Type <span style="font-weight:400;color:var(--muted);">(AI will auto-detect if set to Auto)</span>
+        </label>
+        <select id="docTypeSelect" style="width:100%;padding:.55rem .75rem;border:1px solid var(--border);border-radius:6px;font-size:.85rem;background:var(--white);">
+          <option value="Other">🤖 Auto-detect with AI</option>
           <option value="LPA">LPA (Limited Partnership Agreement)</option>
+          <option value="PPM">PPM (Private Placement Memorandum)</option>
+          <option value="Side Letter">Side Letter</option>
+          <option value="Financial Statements">Financial Statements</option>
+          <option value="Audit Report">Audit Report</option>
+          <option value="Tax Document">Tax Document</option>
+          <option value="Subscription Agreement">Subscription Agreement</option>
           <option value="Presentation">Presentation / Deck</option>
           <option value="Policy">Policy</option>
           <option value="Memo">Memo / Advisory</option>
-          <option value="Tax">Tax Document</option>
-          <option value="Other">Other</option>
+          <option value="DDQ">DDQ</option>
+          <option value="ESG Report">ESG Report</option>
         </select>
       </div>
-      <div class="field-group">
-        <label>File</label>
-        <input type="file" name="file" accept=".pdf,.docx,.doc,.txt,.md" required>
-        <div class="field-hint">Supported: PDF, DOCX, TXT, Markdown</div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn-outline" onclick="document.getElementById('uploadModal').style.display='none'">Cancel</button>
-        <button type="submit" class="btn-primary">Upload & Index</button>
-      </div>
-    </form>
+    </div>
+
+    <!-- Per-file progress queue (shown during processing) -->
+    <div id="uploadQueue" style="display:none;padding:0 1.25rem 1rem;max-height:360px;overflow-y:auto;">
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem;" id="queueSummary"></div>
+      <div id="queueItems" style="display:flex;flex-direction:column;gap:.5rem;"></div>
+    </div>
+
+    <div class="modal-footer" id="uploadFooter">
+      <button type="button" class="btn btn-outline" onclick="closeUpload()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="uploadBtn" disabled onclick="startQueue()">
+        Upload & Analyse
+      </button>
+    </div>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script>
+let selectedFiles = [];
+
+function closeUpload() {
+  document.getElementById('uploadModal').style.display = 'none';
+  // Reset to setup view
+  document.getElementById('uploadSetup').style.display = 'block';
+  document.getElementById('uploadQueue').style.display = 'none';
+  document.getElementById('uploadFooter').style.display = 'flex';
+  const uploadBtn = document.getElementById('uploadBtn');
+  uploadBtn.style.display = '';
+  uploadBtn.textContent = 'Upload & Analyse';
+  document.getElementById('docTypeRow').style.display = 'none';
+  selectedFiles = [];
+  renderFileList();
+}
+
+function onDragOver(e) { e.preventDefault(); document.getElementById('dropZone').classList.add('drag-over'); }
+function onDragLeave(e) { document.getElementById('dropZone').classList.remove('drag-over'); }
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.remove('drag-over');
+  addFiles(e.dataTransfer.files);
+}
+function onFilesSelected(files) { addFiles(files); }
+
+function addFiles(files) {
+  const allowed = ['.pdf','.docx','.doc','.txt','.md'];
+  for (const f of files) {
+    const ext = '.' + f.name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) continue;
+    if (selectedFiles.length >= 5) {
+      alert('Maximum 5 documents per upload. Remove a file to add another.');
+      break;
+    }
+    if (!selectedFiles.find(x => x.name === f.name && x.size === f.size)) {
+      selectedFiles.push(f);
+    }
+  }
+  renderFileList();
+  syncFileInput();
+}
+
+function removeFile(idx) {
+  selectedFiles.splice(idx, 1);
+  renderFileList();
+  syncFileInput();
+}
+
+function renderFileList() {
+  const list = document.getElementById('fileList');
+  const btn = document.getElementById('uploadBtn');
+  if (!selectedFiles.length) { list.innerHTML = ''; btn.disabled = true; return; }
+  btn.disabled = false;
+  document.getElementById('docTypeRow').style.display = 'block';
+  const remaining = 5 - selectedFiles.length;
+  list.dataset.header = `${selectedFiles.length}/5 file${selectedFiles.length !== 1 ? 's' : ''} selected${remaining > 0 ? ' · ' + remaining + ' slot' + (remaining !== 1 ? 's' : '') + ' remaining' : ' · limit reached'}`;
+  list.innerHTML = `<div style="font-size:.72rem;color:var(--muted);margin-bottom:.2rem;">${list.dataset.header}</div>` +
+    selectedFiles.map((f, i) => `
+    <div class="file-item">
+      <span style="font-size:1rem;">${fileIcon(f.name)}</span>
+      <span class="file-item-name">${escHtml(f.name)}</span>
+      <span class="file-item-size">${formatSize(f.size)}</span>
+      <span class="file-item-remove" onclick="removeFile(${i})">✕</span>
+    </div>`).join('');
+}
+
+function syncFileInput() {
+  const dt = new DataTransfer();
+  selectedFiles.forEach(f => dt.items.add(f));
+  document.getElementById('fileInput').files = dt.files;
+}
+
+async function startQueue() {
+  if (!selectedFiles.length) return;
+  const docType = document.getElementById('docTypeSelect').value;
+
+  // Switch views
+  document.getElementById('uploadSetup').style.display = 'none';
+  document.getElementById('uploadQueue').style.display = 'block';
+  document.getElementById('uploadFooter').style.display = 'none';
+
+  const n = selectedFiles.length;
+  document.getElementById('queueSummary').textContent =
+    `Uploading ${n} document${n > 1 ? 's' : ''} — AI will analyse each one…`;
+
+  // Build queue item rows
+  const items = document.getElementById('queueItems');
+  items.innerHTML = selectedFiles.map((f, i) => `
+    <div class="q-item" id="qi-${i}">
+      <div class="q-item-row">
+        <span class="q-item-icon">${fileIcon(f.name)}</span>
+        <span class="q-item-name">${escHtml(f.name)}</span>
+        <span class="q-item-size">${formatSize(f.size)}</span>
+        <span class="q-item-status q-status-queued" id="qs-${i}">Queued</span>
+      </div>
+      <div class="q-item-bar"><div class="q-item-bar-fill" id="qb-${i}" style="width:0%"></div></div>
+      <div class="q-item-meta" id="qm-${i}" style="display:none;"></div>
+    </div>`).join('');
+
+  let doneCount = 0;
+  let errCount = 0;
+
+  for (let i = 0; i < selectedFiles.length; i++) {
+    const f = selectedFiles[i];
+    const statusEl = document.getElementById(`qs-${i}`);
+    const barEl    = document.getElementById(`qb-${i}`);
+    const metaEl   = document.getElementById(`qm-${i}`);
+
+    // Uploading
+    statusEl.className = 'q-item-status q-status-uploading';
+    statusEl.textContent = 'Uploading…';
+    barEl.style.width = '30%';
+
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('doc_type', docType);
+
+    try {
+      const resp = await fetch('/documents/upload-one', { method: 'POST', body: fd });
+
+      // AI analysing phase
+      statusEl.className = 'q-item-status q-status-ai';
+      statusEl.textContent = '🤖 Analysing…';
+      barEl.style.width = '70%';
+
+      const data = await resp.json();
+
+      if (data.status === 'ok') {
+        barEl.style.width = '100%';
+        statusEl.className = 'q-item-status q-status-done';
+        statusEl.textContent = '✅ Done';
+        // Show AI-detected type + page count
+        const typeLabel = data.ai_doc_type || '';
+        const pages = data.page_count ? ` · ${data.page_count}p` : '';
+        const snippet = data.summary ? ' · ' + data.summary.slice(0, 90) + (data.summary.length > 90 ? '…' : '') : '';
+        metaEl.style.display = 'block';
+        metaEl.textContent = typeLabel + pages + snippet;
+        doneCount++;
+      } else {
+        throw new Error(data.error || 'Upload failed');
+      }
+    } catch (err) {
+      barEl.style.width = '100%';
+      barEl.style.background = '#fca5a5';
+      statusEl.className = 'q-item-status q-status-error';
+      statusEl.textContent = '❌ Error';
+      metaEl.style.display = 'block';
+      metaEl.textContent = err.message;
+      errCount++;
+    }
+  }
+
+  // All done
+  const summary = document.getElementById('queueSummary');
+  summary.textContent = `Done: ${doneCount} uploaded${errCount ? ', ' + errCount + ' failed' : ''}.`;
+
+  document.getElementById('uploadFooter').style.display = 'flex';
+  const cancelBtn = document.querySelector('#uploadFooter .btn-outline');
+  cancelBtn.textContent = 'Close';
+  document.getElementById('uploadBtn').style.display = 'none';
+
+  // Auto-reload after short delay to show updated doc list
+  setTimeout(() => location.reload(), 1200);
+}
+
+function fileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  return {pdf:'📄', docx:'📝', doc:'📝', txt:'📃', md:'📃'}[ext] || '📄';
+}
+function formatSize(b) {
+  if (b > 1048576) return (b/1048576).toFixed(1)+' MB';
+  if (b > 1024) return (b/1024).toFixed(0)+' KB';
+  return b+' B';
+}
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+
 {% if user.role == 'admin' %}
 <script>
 async function bulkIngest() {

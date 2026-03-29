@@ -1,23 +1,75 @@
 """
 Document ingestion: parse files, chunk text, build FTS index.
-Supports .txt, .md, .pdf, .docx
+AI-powered: auto doc-type detection, document summary, per-page summaries.
+Hybrid search: metadata → page summaries → chunks.
 """
 import os
 import re
-from database import get_db
+import json
+from database import get_db, put_db
 
-CHUNK_SIZE = 900
+CHUNK_SIZE    = 900
 CHUNK_OVERLAP = 200
 
+_PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
-# ── File readers ──────────────────────────────────────────────────────────────
 
-def _read_txt(path: str) -> str:
+def _load_prompt(name: str, **kwargs) -> str:
+    """
+    Load a prompt from prompts/<name>.md.
+    - Strips YAML frontmatter (--- ... ---) automatically
+    - Substitutes ${variable} and ${variable:default} placeholders
+    """
+    import re
+    path = os.path.join(_PROMPTS_DIR, name + ".md")
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    defaults = {}
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            front = text[3:end]
+            in_vars = False
+            for line in front.splitlines():
+                if line.strip() == "variables:":
+                    in_vars = True
+                    continue
+                if in_vars:
+                    if line and not line.startswith(" "):
+                        in_vars = False
+                        continue
+                    m = re.match(r'\s+(\w+):\s*"?(.*?)"?\s*$', line)
+                    if m:
+                        defaults[m.group(1)] = m.group(2)
+            text = text[end + 4:].lstrip("\n")
+
+    values = {**defaults, **{k: str(v) for k, v in kwargs.items()}}
+
+    def _replace(m):
+        key = m.group(1)
+        inline_default = m.group(2) if m.group(2) is not None else ""
+        return values.get(key, inline_default)
+
+    text = re.sub(r'\$\{(\w+)(?::([^}]*))?\}', _replace, text)
+    return text
+
+DOC_TYPES = [
+    "LPA", "PPM", "Side Letter", "Subscription Agreement",
+    "Financial Statements", "Audit Report", "Tax Document",
+    "Presentation", "Policy", "Memo", "DDQ", "ESG Report",
+    "Fee Schedule", "Distribution Notice", "Capital Call", "Other"
+]
+
+
+# ── File readers ───────────────────────────────────────────────────────────────
+
+def _read_txt(path):
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
 
 
-def _read_pdf(path: str) -> tuple[str, list[tuple[int, str]]]:
+def _read_pdf(path):
     """Returns (full_text, [(page_num, page_text), ...])"""
     try:
         import fitz
@@ -32,7 +84,7 @@ def _read_pdf(path: str) -> tuple[str, list[tuple[int, str]]]:
         return text, [(1, text)]
 
 
-def _read_docx(path: str) -> str:
+def _read_docx(path):
     try:
         from docx import Document
         doc = Document(path)
@@ -43,7 +95,7 @@ def _read_docx(path: str) -> str:
         return f"[Error reading DOCX: {e}]"
 
 
-def read_file(path: str) -> tuple:
+def read_file(path):
     """Returns (content, file_type, pages_or_None)."""
     ext = os.path.splitext(path)[1].lower()
     if ext == ".pdf":
@@ -57,10 +109,9 @@ def read_file(path: str) -> tuple:
         return _read_txt(path), "text", None
 
 
-# ── Chunking ──────────────────────────────────────────────────────────────────
+# ── Chunking ───────────────────────────────────────────────────────────────────
 
-def _detect_section(text: str) -> str:
-    """Try to detect a section/heading from the start of a chunk."""
+def _detect_section(text):
     lines = text.strip().splitlines()
     for line in lines[:3]:
         line = line.strip()
@@ -71,42 +122,29 @@ def _detect_section(text: str) -> str:
     return None
 
 
-def chunk_text_simple(text: str, size: int = CHUNK_SIZE,
-                       overlap: int = CHUNK_OVERLAP) -> list[dict]:
-    """Chunk text into overlapping segments. Returns list of {text, section_ref}."""
+def chunk_text_simple(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
     if not text:
         return []
-
     chunks = []
     start = 0
     while start < len(text):
         end = start + size
         chunk = text[start:end]
-
-        # Prefer breaking at double newline
         if end < len(text):
             bp = chunk.rfind('\n\n')
             if bp > size // 3:
                 end = start + bp
                 chunk = text[start:end]
-
         if chunk.strip():
-            chunks.append({
-                "text": chunk.strip(),
-                "section_ref": _detect_section(chunk),
-            })
-
+            chunks.append({"text": chunk.strip(), "section_ref": _detect_section(chunk)})
         start = end - overlap
         if start >= len(text):
             break
-
     return chunks
 
 
-def chunk_by_pages(pages: list[tuple[int, str]],
-                   size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[dict]:
-    """Chunk with page references for PDFs."""
+def chunk_by_pages(pages, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     all_chunks = []
     for page_num, page_text in pages:
         page_chunks = chunk_text_simple(page_text, size, overlap)
@@ -116,16 +154,125 @@ def chunk_by_pages(pages: list[tuple[int, str]],
     return all_chunks
 
 
-# ── Ingestion ─────────────────────────────────────────────────────────────────
+# ── AI Analysis ────────────────────────────────────────────────────────────────
 
-def ingest_fund_document(filepath: str, name: str, doc_type: str,
-                          uploaded_by: int) -> int:
+def _get_openai_client():
+    try:
+        from openai import OpenAI
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            return None
+        return OpenAI(api_key=key)
+    except Exception:
+        return None
+
+
+def _ai_analyze_document(text_sample, filename):
     """
-    Parse file, store in DB, build FTS index.
+    Use LLM to detect document type, generate summary, and key topics.
+    Returns dict: {ai_doc_type, summary, key_topics}
+    """
+    client = _get_openai_client()
+    if not client:
+        return {"ai_doc_type": "Other", "summary": "", "key_topics": []}
+
+    sample = text_sample[:4000].strip()
+    types_str = ", ".join(DOC_TYPES)
+
+    prompt = _load_prompt("doc_analyze",
+        filename=filename,
+        sample=sample,
+        doc_types=types_str,
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_tokens=600,
+            temperature=0,
+        )
+        data = json.loads(resp.choices[0].message.content)
+        return {
+            "ai_doc_type": data.get("doc_type", "Other"),
+            "summary": data.get("summary", ""),
+            "key_topics": data.get("key_topics", []),
+        }
+    except Exception:
+        return {"ai_doc_type": "Other", "summary": "", "key_topics": []}
+
+
+def _ai_summarize_pages(pages, doc_name):
+    """
+    Generate a short summary for each page (batched in groups of 5).
+    Returns list of {page_num, summary}.
+    """
+    client = _get_openai_client()
+    if not client:
+        return []
+
+    # Limit to first 30 pages to keep costs low
+    pages_to_summarize = [p for p in pages if p[1].strip()][:30]
+    if not pages_to_summarize:
+        return []
+
+    results = []
+    # Batch 5 pages per LLM call
+    batch_size = 5
+    for i in range(0, len(pages_to_summarize), batch_size):
+        batch = pages_to_summarize[i:i + batch_size]
+        pages_text = ""
+        for page_num, page_text in batch:
+            pages_text += f"\n\n--- PAGE {page_num} ---\n{page_text[:800]}"
+
+        prompt = _load_prompt("doc_page_summary",
+            doc_name=doc_name,
+            pages_text=pages_text,
+        )
+
+        try:
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                max_tokens=800,
+                temperature=0,
+            )
+            data = json.loads(resp.choices[0].message.content)
+            for p in data.get("pages", []):
+                if p.get("page_num") and p.get("summary"):
+                    results.append({"page_num": p["page_num"], "summary": p["summary"]})
+        except Exception:
+            # On failure, add empty summaries for this batch
+            for page_num, _ in batch:
+                results.append({"page_num": page_num, "summary": ""})
+
+    return results
+
+
+# ── Ingestion ──────────────────────────────────────────────────────────────────
+
+def ingest_fund_document(filepath, name, doc_type, uploaded_by, run_ai=True):
+    """
+    Parse file, AI-analyze, store in DB with summary + page summaries, build FTS.
     Returns fund_documents.id
     """
     content, file_type, pages = read_file(filepath)
+    page_count = len(pages) if pages else 0
 
+    # AI analysis
+    ai_meta = {"ai_doc_type": doc_type, "summary": "", "key_topics": []}
+    page_summaries = []
+    if run_ai and content.strip():
+        ai_meta = _ai_analyze_document(content, name)
+        # Use AI doc type only if user passed "Other" or default
+        if doc_type in ("Other", "") or not doc_type:
+            doc_type = ai_meta["ai_doc_type"]
+        if pages:
+            page_summaries = _ai_summarize_pages(pages, name)
+
+    # Chunk
     if pages:
         chunks = chunk_by_pages(pages)
     else:
@@ -136,15 +283,28 @@ def ingest_fund_document(filepath: str, name: str, doc_type: str,
     conn = get_db()
     cur = conn.cursor()
 
-    # Insert document record — RETURNING id works with plain psycopg2 cursor
     cur.execute("""
-        INSERT INTO fund_documents (name, doc_type, filepath, content, uploaded_by)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO fund_documents
+            (name, doc_type, ai_doc_type, filepath, content, summary, key_topics,
+             page_count, uploaded_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
-    """, (name, doc_type, filepath, content[:10000], uploaded_by))
+    """, (
+        name, doc_type, ai_meta["ai_doc_type"],
+        filepath, content[:10000],
+        ai_meta["summary"],
+        json.dumps(ai_meta["key_topics"]),
+        page_count, uploaded_by,
+    ))
     doc_id = cur.fetchone()[0]
 
-    # Insert chunks — tsvector trigger auto-populates the FTS column
+    # Update search_meta tsvector (name + summary + key_topics)
+    meta_text = f"{name} {ai_meta['summary']} {' '.join(ai_meta['key_topics'])}"
+    cur.execute("""
+        UPDATE fund_documents SET search_meta = to_tsvector('english', %s) WHERE id=%s
+    """, (meta_text, doc_id))
+
+    # Insert chunks
     for i, chunk in enumerate(chunks):
         cur.execute("""
             INSERT INTO document_chunks
@@ -153,13 +313,20 @@ def ingest_fund_document(filepath: str, name: str, doc_type: str,
         """, (doc_id, chunk["text"], i,
               chunk.get("page_ref"), chunk.get("section_ref")))
 
+    # Insert page summaries
+    for ps in page_summaries:
+        if ps["summary"]:
+            cur.execute("""
+                INSERT INTO page_summaries (document_id, page_num, summary, search_vector)
+                VALUES (%s, %s, %s, to_tsvector('english', %s))
+            """, (doc_id, ps["page_num"], ps["summary"], ps["summary"]))
+
     conn.commit()
-    conn.close()
+    put_db(conn)
     return doc_id
 
 
-def ingest_investor_document(filepath: str, name: str, doc_type: str,
-                              investor_session_id: int) -> int:
+def ingest_investor_document(filepath, name, doc_type, investor_session_id):
     """Ingest an investor-specific document. Returns investor_documents.id"""
     content, file_type, pages = read_file(filepath)
 
@@ -188,37 +355,22 @@ def ingest_investor_document(filepath: str, name: str, doc_type: str,
         """, (inv_doc_id, chunk["text"], i))
 
     conn.commit()
-    conn.close()
+    put_db(conn)
     return inv_doc_id
 
 
-def ingest_from_folder(folder_path: str, uploaded_by: int = 1) -> list[dict]:
+def ingest_from_folder(folder_path, uploaded_by=1):
     """Bulk ingest all supported files from a folder."""
     supported = {".txt", ".md", ".pdf", ".docx", ".doc"}
-    type_map = {
-        "lpa": "LPA",
-        "presentation": "Presentation",
-        "policy": "Policy",
-        "memo": "Memo",
-        "tax": "Tax",
-    }
     results = []
     for fname in os.listdir(folder_path):
         ext = os.path.splitext(fname)[1].lower()
         if ext not in supported:
             continue
-        lower = fname.lower()
-        doc_type = "Other"
-        for key, val in type_map.items():
-            if key in lower:
-                doc_type = val
-                break
-
         filepath = os.path.join(folder_path, fname)
         try:
-            doc_id = ingest_fund_document(filepath, fname, doc_type, uploaded_by)
+            doc_id = ingest_fund_document(filepath, fname, "Other", uploaded_by, run_ai=True)
             results.append({"file": fname, "doc_id": doc_id, "status": "ok"})
         except Exception as e:
             results.append({"file": fname, "status": "error", "error": str(e)})
-
     return results

@@ -285,12 +285,12 @@ Your response must include:
       <h3 style="font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.5rem;">🔧 Enabled Tools</h3>
       <div class="caf-sub" style="margin-bottom:.75rem;">Select which tools this agent can use during processing</div>
       <div class="caf-tools">
-        {% for tool in all_tools %}
+        {% for tool_key, tool_label in all_tools.items() %}
         <span>
-          <input class="caf-tool-cb" type="checkbox" name="tools" value="{{ tool }}"
+          <input class="caf-tool-cb" type="checkbox" name="tools" value="{{ tool_key }}"
                  id="tool_{{ loop.index }}"
-                 {{ 'checked' if agent and tool in agent.tools }}>
-          <label class="caf-tool-lbl" for="tool_{{ loop.index }}">{{ tool }}</label>
+                 {{ 'checked' if agent and tool_key in agent.tools }}>
+          <label class="caf-tool-lbl" for="tool_{{ loop.index }}">{{ tool_label }}</label>
         </span>
         {% endfor %}
       </div>

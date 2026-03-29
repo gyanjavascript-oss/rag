@@ -27,6 +27,55 @@ from llm_crypto import decrypt_key
 FUND_NAME = os.getenv("FUND_NAME", "the Fund")
 MODEL = "gpt-4o"
 
+_PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+
+
+def _load_prompt(name: str, **kwargs) -> str:
+    """
+    Load a prompt from prompts/<name>.md.
+    - Strips YAML frontmatter (--- ... ---) automatically
+    - Substitutes ${variable} and ${variable:default} placeholders
+    - Falls back to frontmatter defaults for any variable not passed in kwargs
+    """
+    import re
+    path = os.path.join(_PROMPTS_DIR, name + ".md")
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    # Parse YAML frontmatter to extract variable defaults
+    defaults = {}
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            front = text[3:end]
+            # Extract variables block
+            in_vars = False
+            for line in front.splitlines():
+                if line.strip() == "variables:":
+                    in_vars = True
+                    continue
+                if in_vars:
+                    if line and not line.startswith(" "):
+                        in_vars = False
+                        continue
+                    m = re.match(r'\s+(\w+):\s*"?(.*?)"?\s*$', line)
+                    if m:
+                        defaults[m.group(1)] = m.group(2)
+            # Strip frontmatter from body
+            text = text[end + 4:].lstrip("\n")
+
+    # Merge defaults with provided kwargs (kwargs takes priority)
+    values = {**defaults, **{k: str(v) for k, v in kwargs.items()}}
+
+    # Replace ${var:default} — inline default overrides everything if key not in values
+    def _replace(m):
+        key = m.group(1)
+        inline_default = m.group(2) if m.group(2) is not None else ""
+        return values.get(key, inline_default)
+
+    text = re.sub(r'\$\{(\w+)(?::([^}]*))?\}', _replace, text)
+    return text
+
 
 _OPENAI_COMPAT_PROVIDERS = {"openai", "groq", "mistral", "ollama", "openrouter", "custom"}
 
@@ -83,89 +132,19 @@ def _get_openai_clients() -> list:
     return [(kid, mdl, cli) for kid, mdl, prov, cli in _get_clients()
             if prov != "anthropic"]
 
-_SYSTEM_PROMPT_TEMPLATE = """You are an expert DDQ (Due Diligence Questionnaire) assistant for {fund_name}.
-You also act as a Research Agent capable of deep web research for external market and company questions.
-
-TODAY'S DATE: {today}
-Your training data is outdated — always use web_search to get current figures. When searching for financial data, always include the current year ({year}) in your query (e.g. "Apple market cap {year}").
-
-QUESTION TYPE ROUTING — decide the type first:
-
-TYPE A — Fund questions (about the fund itself, its strategy, team, portfolio, fees, terms, performance):
-  1. ALWAYS call search_fund_documents first
-  2. If documents don't fully cover external context (benchmarks, sector trends, news) → also call web_search
-  3. For investor-specific docs → also call search_investor_documents
-
-TYPE B — External research questions (market caps, company valuations, financial data, news, industry trends, any question about external companies or markets):
-  1. Call web_search with a query that includes the current year: e.g. "Apple Inc market cap {year}"
-  2. ALWAYS follow with browse_url on the most relevant result URL to get accurate current data
-  3. If the first browse doesn't answer it, try another URL
-  4. Do NOT search fund documents for external company questions
-
-DETECTING QUESTION TYPE:
-- If the question mentions a specific company (Google, Apple, Microsoft, etc.) or asks for market data, valuations, prices, or external news → TYPE B
-- If the question uses terms like "market cap", "stock price", "net worth", "valuation" of a company → TYPE B
-- If uncertain, check fund documents first (TYPE A)
-
-RESEARCH WORKFLOW FOR TYPE B (web research):
-1. web_search: use specific query with current year e.g. "Google Alphabet market cap {year}" (never use past years)
-2. browse_url: open the best result (prefer companiesmarketcap.com, finance.yahoo.com, reuters.com, macrotrends.net)
-3. If browse returns good data → compose answer with actual numbers and the date they were retrieved
-4. If not → try another URL or different web_search query
-5. NEVER say "I couldn't find results" after only one search attempt — retry with different terms
-
-RESPONSE FORMAT — you MUST return ONLY valid JSON, no other text:
-{{
-  "answer": "Detailed factual answer with actual numbers and the date retrieved. Never say you couldn't find results without retrying.",
-  "sources": [
-    {{"doc_name": "exact document name or URL", "doc_id": 0, "section": "section or page reference", "excerpt": "short verbatim quote"}}
-  ],
-  "draft_response": "Professional response. Start with 'Thank you for your question...'",
-  "themes": ["theme1", "theme2"],
-  "confidence": "high|medium|low",
-  "gaps": "Describe any gaps, otherwise null",
-  "chart_data": {{
-    "type": "bar or line or pie (choose best fit)",
-    "title": "Chart title",
-    "labels": ["label1", "label2", "..."],
-    "datasets": [
-      {{"label": "Series name", "data": [1.0, 2.0, "..."]}}
-    ]
-  }}
-}}
-
-CHART DATA RULES:
-- Include chart_data ONLY when the answer contains 2+ comparable numerical values (market caps, financials, performance, rankings, allocations, historical series, comparisons)
-- For a single company's historical market cap → line chart with dates as labels
-- For comparing multiple companies → bar chart
-- For portfolio allocations or percentages that sum to 100 → pie chart
-- Values must be plain numbers (no $ signs or commas) — use billions (e.g. 3000 for $3 trillion, 182 for $182B)
-- Add a "unit" key like "unit": "USD Billions" or "unit": "%" so the chart can label axes
-- If no chart is appropriate, set chart_data to null
-
-RULES:
-- TODAY is {today} — always search for {year} data, never reference 2023 or older years
-- For external company/market questions: web_search + browse_url first, NOT fund documents
-- Always browse at least one URL after web_search to get actual data (not just snippets)
-- For fund questions: always search fund documents first
-- Never say "I couldn't find results" without having tried at least 2 different searches
-- THEMES must be from: fee structure, performance, portfolio, governance, legal structure,
-  investment strategy, ESG, liquidity, reporting, LP rights, key person, risk management,
-  compliance, tax, track record, team, fund terms, co-investment, distributions, valuation, other"""
-
-
-def _get_system_prompt() -> str:
+def _get_system_prompt(is_investor: bool = False) -> str:
     from datetime import date
     today = date.today()
-    return _SYSTEM_PROMPT_TEMPLATE.format(
+    name = "investor_agent" if is_investor else "ddq_agent"
+    return _load_prompt(name,
         fund_name=FUND_NAME,
         today=today.strftime("%B %d, %Y"),
-        year=today.year,
+        year=str(today.year),
     )
 
 
 # Keep a module-level alias for any code that references SYSTEM_PROMPT directly
-SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE  # replaced dynamically via _get_system_prompt()
+SYSTEM_PROMPT = _get_system_prompt()  # loaded from prompts/ddq_agent.md
 
 
 TOOLS = [
@@ -304,6 +283,9 @@ TOOLS = [
     }
 ]
 
+# Investor-only tools: no web_search or browse_url
+INVESTOR_TOOLS = [t for t in TOOLS if t["function"]["name"] not in ("web_search", "browse_url")]
+
 
 def _execute_tool(tool_name: str, tool_input: dict, investor_session_id: int = None,
                   is_investor: bool = False) -> str:
@@ -430,8 +412,9 @@ def _execute_tool(tool_name: str, tool_input: dict, investor_session_id: int = N
     return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
 
-def _build_messages(question: str, conversation_history: list, custom_system_prompt: str = None) -> list:
-    base = _get_system_prompt()
+def _build_messages(question: str, conversation_history: list,
+                    custom_system_prompt: str = None, is_investor: bool = False) -> list:
+    base = _get_system_prompt(is_investor=is_investor)
     if custom_system_prompt:
         base = custom_system_prompt + "\n\n" + base
     messages = [{"role": "system", "content": base}]
@@ -446,7 +429,7 @@ def _build_messages(question: str, conversation_history: list, custom_system_pro
     return messages
 
 
-def _check_knowledge_base(question: str) -> dict | None:
+def _check_knowledge_base(question: str) -> dict:
     """Check admin knowledge base for a trained answer. Returns result dict or None."""
     kb_hits = search_kb(question, limit=1)
     if not kb_hits:
@@ -465,7 +448,7 @@ def _check_knowledge_base(question: str) -> dict | None:
     }
 
 
-def _check_session_answers(question: str, investor_session_id: int) -> dict | None:
+def _check_session_answers(question: str, investor_session_id: int) -> dict:
     """Check investor-provided session answers first (highest priority)."""
     if not investor_session_id:
         return None
@@ -485,14 +468,20 @@ def _check_session_answers(question: str, investor_session_id: int) -> dict | No
 
 
 def _answer_anthropic(client, model: str, key_id, messages: list,
-                      investor_session_id: int, is_investor: bool) -> dict | None:
+                      investor_session_id: int, is_investor: bool,
+                      allowed_tools: list = None) -> dict:
     """Run tool-use loop with Anthropic client. Returns parsed result dict or None on failure."""
     try:
         system_msg = next((m["content"] for m in messages if m["role"] == "system"), _get_system_prompt())
         msgs = [m for m in messages if m["role"] != "system"]
 
+        # Respect investor tool restrictions and allowed_tools filter
+        base = INVESTOR_TOOLS if is_investor else TOOLS
+        if allowed_tools:
+            base = [t for t in base if t["function"]["name"] in allowed_tools] or base
+
         anthropic_tools = []
-        for t in TOOLS:
+        for t in base:
             fn = t["function"]
             anthropic_tools.append({
                 "name": fn["name"],
@@ -500,7 +489,12 @@ def _answer_anthropic(client, model: str, key_id, messages: list,
                 "input_schema": fn["parameters"],
             })
 
-        for _ in range(6):
+        doc_searches_done = 0
+        retry_count = 0
+        MIN_DOC_SEARCHES = 3 if is_investor else 1
+        MAX_RETRIES = 3 if is_investor else 1
+
+        for _ in range(14):
             resp = client.messages.create(
                 model=model,
                 max_tokens=2048,
@@ -514,6 +508,8 @@ def _answer_anthropic(client, model: str, key_id, messages: list,
                 tool_results = []
                 for blk in resp.content:
                     if blk.type == "tool_use":
+                        if blk.name == "search_fund_documents":
+                            doc_searches_done += 1
                         result = _execute_tool(blk.name, blk.input, investor_session_id, is_investor)
                         tool_results.append({
                             "type": "tool_result",
@@ -523,10 +519,37 @@ def _answer_anthropic(client, model: str, key_id, messages: list,
                 msgs.append({"role": "user", "content": tool_results})
             else:
                 text = "".join(blk.text for blk in resp.content if hasattr(blk, "text"))
+                # Enforce minimum search rounds for investors
+                if is_investor and doc_searches_done < MIN_DOC_SEARCHES and retry_count < MAX_RETRIES:
+                    retry_count += 1
+                    msgs.append({"role": "assistant", "content": resp.content})
+                    msgs.append({"role": "user", "content": [{
+                        "type": "text",
+                        "text": (
+                            f"SEARCH AGENT: You have only called search_fund_documents {doc_searches_done} time(s). "
+                            f"You MUST search at least {MIN_DOC_SEARCHES} times with DIFFERENT query angles. "
+                            f"Search round {doc_searches_done + 1}: use synonyms, related section names, or broader concepts. "
+                            f"Do NOT answer yet — search more first."
+                        )
+                    }]})
+                    continue
+                parsed = _parse_response(text)
+                if parsed.get("confidence") == "low" and retry_count < MAX_RETRIES:
+                    retry_count += 1
+                    msgs.append({"role": "assistant", "content": resp.content})
+                    msgs.append({"role": "user", "content": [{
+                        "type": "text",
+                        "text": (
+                            f"SEARCH RETRY {retry_count}: Confidence is low. Gaps: {parsed.get('gaps') or 'unclear'}. "
+                            f"Search with completely different terminology — synonyms, section names, related concepts. "
+                            f"Search again before answering."
+                        )
+                    }]})
+                    continue
                 if key_id:
                     log_llm_usage(key_id, "anthropic", model,
                                   resp.usage.input_tokens, resp.usage.output_tokens)
-                return _parse_response(text)
+                return parsed
     except Exception:
         pass
     return None
@@ -562,6 +585,7 @@ def answer_question(
     investor_name: str = None,
     is_investor: bool = False,
     custom_system_prompt: str = None,
+    allowed_tools: list = None,
 ) -> dict:
     """Run the DDQ agent. Returns parsed dict with answer, sources, draft_response, themes."""
     session_result = _check_session_answers(question, investor_session_id)
@@ -575,32 +599,41 @@ def answer_question(
     if not clients:
         return _fallback()
 
-    messages = _build_messages(question, conversation_history, custom_system_prompt)
+    messages = _build_messages(question, conversation_history, custom_system_prompt, is_investor)
     _build_investor_context(messages, investor_name, investor_session_id)
+
+    base_tools = INVESTOR_TOOLS if is_investor else TOOLS
+    if allowed_tools:
+        active_tools = [t for t in base_tools if t["function"]["name"] in allowed_tools]
+        if not active_tools:
+            active_tools = base_tools
+    else:
+        active_tools = base_tools
 
     for key_id, model, provider, client in clients:
         try:
             if provider == "anthropic":
                 result = _answer_anthropic(client, model, key_id, messages,
-                                           investor_session_id, is_investor)
+                                           investor_session_id, is_investor, allowed_tools)
                 if result:
                     return result
                 continue
 
             msgs = [m.copy() for m in messages]
             first_call = True
-            retried = False
-            for _ in range(8):
-                # Investors can trigger list_available_documents, so let model pick
-                # Internal staff: force search on first call
-                if first_call and not is_investor:
+            retry_count = 0
+            doc_searches_done = 0
+            MIN_DOC_SEARCHES = 3 if is_investor else 1
+            MAX_RETRIES = 3 if is_investor else 1
+            for _ in range(14):
+                if first_call:
                     tc_choice = {"type": "function", "function": {"name": "search_fund_documents"}}
                 else:
                     tc_choice = "auto"
                 response = client.chat.completions.create(
                     model=model,
                     messages=msgs,
-                    tools=TOOLS,
+                    tools=active_tools,
                     tool_choice=tc_choice,
                     response_format={"type": "json_object"},
                 )
@@ -611,20 +644,35 @@ def answer_question(
                     msgs.append(msg)
                     for tc in msg.tool_calls:
                         args = json.loads(tc.function.arguments)
+                        if tc.function.name == "search_fund_documents":
+                            doc_searches_done += 1
                         res = _execute_tool(tc.function.name, args, investor_session_id, is_investor)
                         msgs.append({"role": "tool", "tool_call_id": tc.id, "content": res})
                 else:
+                    # Enforce minimum search rounds for investors
+                    if is_investor and doc_searches_done < MIN_DOC_SEARCHES and retry_count < MAX_RETRIES:
+                        retry_count += 1
+                        msgs.append(msg)
+                        msgs.append({"role": "user", "content":
+                            f"SEARCH AGENT: You have only called search_fund_documents {doc_searches_done} time(s). "
+                            f"You MUST search at least {MIN_DOC_SEARCHES} times with DIFFERENT query angles before answering. "
+                            f"Search round {doc_searches_done + 1}: use synonyms, related section names, or broader concepts. "
+                            f"Do NOT answer yet — search more first."})
+                        continue
+
                     if key_id and response.usage:
                         log_llm_usage(key_id, provider, model,
                                       response.usage.prompt_tokens,
                                       response.usage.completion_tokens)
                     parsed = _parse_response(msg.content or "")
-                    if parsed.get("confidence") == "low" and not retried:
-                        retried = True
+
+                    if parsed.get("confidence") == "low" and retry_count < MAX_RETRIES:
+                        retry_count += 1
                         msgs.append(msg)
                         msgs.append({"role": "user", "content":
-                            f"LOOP RETRY: Low confidence. Gaps: {parsed.get('gaps') or 'unclear'}. "
-                            f"Try broader/different search keywords and search again."})
+                            f"SEARCH RETRY {retry_count}: Low confidence. Gaps: {parsed.get('gaps') or 'unclear'}. "
+                            f"Search with completely different terminology — synonyms, section names, related concepts. "
+                            f"Search again before answering."})
                         continue
                     return parsed
         except Exception:
@@ -641,6 +689,7 @@ def stream_answer(
     is_investor: bool = False,
     agent_memories: list = None,
     custom_system_prompt: str = None,
+    allowed_tools: list = None,
 ):
     """
     Generator yielding SSE-formatted strings.
@@ -662,8 +711,16 @@ def stream_answer(
         yield f"data: {json.dumps({'type': 'error', 'message': 'No LLM keys configured.'})}\n\n"
         return
 
-    messages = _build_messages(question, conversation_history, custom_system_prompt)
+    messages = _build_messages(question, conversation_history, custom_system_prompt, is_investor)
     _build_investor_context(messages, investor_name, investor_session_id, agent_memories)
+
+    base_tools = INVESTOR_TOOLS if is_investor else TOOLS
+    if allowed_tools:
+        active_tools = [t for t in base_tools if t["function"]["name"] in allowed_tools]
+        if not active_tools:
+            active_tools = base_tools
+    else:
+        active_tools = base_tools
 
     yield f"data: {json.dumps({'type': 'thinking', 'text': 'Analysing your question…'})}\n\n"
 
@@ -671,7 +728,7 @@ def stream_answer(
         try:
             if provider == "anthropic":
                 result = _answer_anthropic(client, model, key_id, messages,
-                                           investor_session_id, is_investor)
+                                           investor_session_id, is_investor, allowed_tools)
                 if result:
                     answer = result.get("answer", "")
                     if answer:
@@ -685,17 +742,23 @@ def stream_answer(
 
             msgs = [m.copy() for m in messages]
             first_call = True
-            retried = False
+            retry_count = 0
+            doc_searches_done = 0  # track how many search_fund_documents calls made
+            doc_registry = {}      # doc_name (lower) → doc_id, built from search results
+            # Investor loop agent: require at least MIN_DOC_SEARCHES before accepting answer
+            MIN_DOC_SEARCHES = 3 if is_investor else 1
+            MAX_RETRIES = 3 if is_investor else 1
             step = 0
-            for _ in range(10):
-                if first_call and not is_investor:
+            for _ in range(14):
+                # Force first call to always search fund documents
+                if first_call:
                     tc_choice = {"type": "function", "function": {"name": "search_fund_documents"}}
                 else:
                     tc_choice = "auto"
                 response = client.chat.completions.create(
                     model=model,
                     messages=msgs,
-                    tools=TOOLS,
+                    tools=active_tools,
                     tool_choice=tc_choice,
                     response_format={"type": "json_object"},
                 )
@@ -709,17 +772,17 @@ def stream_answer(
                         args = json.loads(tc.function.arguments)
                         tool = tc.function.name
 
-                        # Emit rich thinking event per tool call
-                        if tool == "web_search":
+                        if tool == "search_fund_documents":
+                            doc_searches_done += 1
+                            q = args.get("query", "")
+                            yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '📄', 'text': f'Searching fund documents (round {doc_searches_done}): {q}'})}\n\n"
+                        elif tool == "web_search":
                             q = args.get("query", "")
                             yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '🔍', 'text': f'Searching the web for: {q}'})}\n\n"
                         elif tool == "browse_url":
                             url = args.get("url", "")
                             domain = url.split("/")[2] if "//" in url else url[:40]
                             yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '🌐', 'text': f'Reading page: {domain}', 'url': url})}\n\n"
-                        elif tool == "search_fund_documents":
-                            q = args.get("query", "")
-                            yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '📄', 'text': f'Searching fund documents for: {q}'})}\n\n"
                         elif tool == "search_investor_documents":
                             yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '📁', 'text': 'Searching your uploaded documents…'})}\n\n"
                         elif tool == "list_available_documents":
@@ -729,44 +792,76 @@ def stream_answer(
 
                         res = _execute_tool(tool, args, investor_session_id, is_investor)
 
-                        # Emit what was found
                         try:
                             res_data = json.loads(res)
                             if tool == "web_search":
                                 sites = [r.get("url", "") for r in res_data.get("results", [])[:5]]
                                 domains = list({s.split("/")[2] for s in sites if "//" in s})[:4]
                                 if domains:
-                                    domains_str = ", ".join(domains)
-                                    yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '✅', 'text': 'Found results from: ' + domains_str, 'sites': sites})}\n\n"
+                                    yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '✅', 'text': 'Found results from: ' + ', '.join(domains), 'sites': sites})}\n\n"
                             elif tool == "browse_url":
                                 chars = len(res_data.get("content", ""))
                                 yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '✅', 'text': f'Extracted {chars} characters of content'})}\n\n"
                             elif tool in ("search_fund_documents", "search_investor_documents"):
                                 count = len(res_data.get("results", []))
-                                yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '✅', 'text': f'Found {count} relevant passage(s) in documents'})}\n\n"
+                                # Build doc_name → doc_id registry from search results
+                                for r in res_data.get("results", []):
+                                    name = (r.get("doc_name") or "").strip()
+                                    did = r.get("doc_id") or 0
+                                    if name and did:
+                                        doc_registry[name.lower()] = did
+                                yield f"data: {json.dumps({'type': 'thinking', 'step': step, 'icon': '✅', 'text': f'Found {count} relevant passage(s)'})}\n\n"
                         except Exception:
                             pass
 
                         msgs.append({"role": "tool", "tool_call_id": tc.id, "content": res})
                 else:
+                    # LLM wants to produce final answer — check if loop agent requires more searches
+                    if is_investor and doc_searches_done < MIN_DOC_SEARCHES and retry_count < MAX_RETRIES:
+                        retry_count += 1
+                        remaining = MIN_DOC_SEARCHES - doc_searches_done
+                        yield f"data: {json.dumps({'type': 'thinking', 'icon': '🔄', 'text': f'Search agent: searched {doc_searches_done} time(s) — trying {remaining} more angle(s) for better coverage…'})}\n\n"
+                        msgs.append(msg)
+                        msgs.append({"role": "user", "content":
+                            f"SEARCH AGENT: You have only called search_fund_documents {doc_searches_done} time(s). "
+                            f"You MUST search at least {MIN_DOC_SEARCHES} times with DIFFERENT query angles before answering. "
+                            f"Search round {doc_searches_done + 1}: use synonyms, related section names, or broader concepts "
+                            f"related to the question. Do NOT answer yet — search more first."})
+                        continue
+
                     if key_id and response.usage:
                         log_llm_usage(key_id, provider, model,
                                       response.usage.prompt_tokens,
                                       response.usage.completion_tokens)
                     parsed = _parse_response(msg.content or "")
 
-                    # ── Loop agent: retry once on low confidence ──────────────
-                    if parsed.get("confidence") == "low" and not retried:
-                        retried = True
-                        gap_text = str(parsed.get("gaps") or "unclear")[:80]
-                        yield f"data: {json.dumps({'type': 'thinking', 'icon': '🔄', 'text': 'Low confidence — retrying with broader search… (gap: ' + gap_text + ')'})}\n\n"
+                    # ── Search agent: retry on low confidence (up to MAX_RETRIES) ──
+                    if parsed.get("confidence") == "low" and retry_count < MAX_RETRIES:
+                        retry_count += 1
+                        gap_text = str(parsed.get("gaps") or "unclear")[:100]
+                        yield f"data: {json.dumps({'type': 'thinking', 'icon': '🔄', 'text': f'Low confidence (retry {retry_count}/{MAX_RETRIES}) — searching with different terms… Gap: {gap_text}'})}\n\n"
                         msgs.append(msg)
                         msgs.append({"role": "user", "content":
-                            f"LOOP RETRY: Low confidence. Gaps: {parsed.get('gaps') or 'unclear'}. "
-                            f"Try broader/different keywords. Search again before answering."})
+                            f"SEARCH RETRY {retry_count}: Confidence is low. Gaps: {parsed.get('gaps') or 'unclear'}. "
+                            f"Search fund documents again using completely different terminology — "
+                            f"try section names, synonyms, or related concepts you haven't tried yet. "
+                            f"Search before answering."})
                         continue
 
-                    yield f"data: {json.dumps({'type': 'thinking', 'icon': '✍️', 'text': 'Composing answer…'})}\n\n"
+                    # Enrich sources with correct doc_id from registry
+                    for src in parsed.get("sources", []):
+                        if not src.get("doc_id"):
+                            name_key = (src.get("doc_name") or "").strip().lower()
+                            if name_key in doc_registry:
+                                src["doc_id"] = doc_registry[name_key]
+                            else:
+                                # Fuzzy: find any registry key that starts with / contains the name
+                                for reg_name, reg_id in doc_registry.items():
+                                    if name_key and (name_key in reg_name or reg_name in name_key):
+                                        src["doc_id"] = reg_id
+                                        break
+
+                    yield f"data: {json.dumps({'type': 'thinking', 'icon': '✍️', 'text': f'Composing answer from {doc_searches_done} search round(s)…'})}\n\n"
                     answer = parsed.get("answer", "")
                     if answer:
                         words = answer.split(" ")
@@ -830,25 +925,12 @@ def generate_investor_profile(investor_name: str, entity: str, notes: str, quest
 
     q_text = "\n".join(f"- {q['content']}" for q in questions[:40]) if questions else "No questions asked yet."
 
-    prompt = f"""You are an investor relations analyst. Based on the information below, generate a concise investor profile.
-
-INVESTOR NAME: {investor_name}
-ENTITY: {entity or 'Not specified'}
-NOTES / DESCRIPTION: {notes or 'None provided'}
-
-QUESTIONS ASKED BY THIS INVESTOR:
-{q_text}
-
-Return ONLY valid JSON with this exact structure:
-{{
-  "investor_type": "e.g. Institutional, Family Office, HNW Individual, Pension Fund, Endowment, etc.",
-  "focus_areas": ["area1", "area2", "area3"],
-  "key_concerns": ["concern1", "concern2", "concern3"],
-  "due_diligence_priorities": ["priority1", "priority2", "priority3"],
-  "communication_style": "Brief description of how they communicate (e.g. detail-oriented, high-level, technical)",
-  "risk_profile": "Conservative / Moderate / Aggressive — with brief reasoning",
-  "summary": "2-3 sentence professional summary of this investor's profile and what they care about most."
-}}"""
+    prompt = _load_prompt("investor_profile",
+        investor_name=investor_name,
+        entity=entity or "Not specified",
+        notes=notes or "None provided",
+        questions=q_text,
+    )
 
     for key_id, model, provider, client in clients:
         try:

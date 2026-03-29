@@ -122,14 +122,19 @@ def init_db():
         # Fund documents
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fund_documents (
-                id          SERIAL PRIMARY KEY,
-                name        TEXT NOT NULL,
-                doc_type    TEXT NOT NULL DEFAULT 'other',
-                filepath    TEXT,
-                content     TEXT,
-                status      TEXT DEFAULT 'active',
-                uploaded_by INTEGER,
-                uploaded_at TIMESTAMP DEFAULT NOW(),
+                id           SERIAL PRIMARY KEY,
+                name         TEXT NOT NULL,
+                doc_type     TEXT NOT NULL DEFAULT 'Other',
+                ai_doc_type  TEXT DEFAULT '',
+                filepath     TEXT,
+                content      TEXT,
+                summary      TEXT DEFAULT '',
+                key_topics   TEXT DEFAULT '[]',
+                page_count   INTEGER DEFAULT 0,
+                search_meta  TSVECTOR,
+                status       TEXT DEFAULT 'active',
+                uploaded_by  INTEGER,
+                uploaded_at  TIMESTAMP DEFAULT NOW(),
                 FOREIGN KEY (uploaded_by) REFERENCES users(id)
             )
         """)
@@ -147,6 +152,39 @@ def init_db():
                 FOREIGN KEY (document_id) REFERENCES fund_documents(id) ON DELETE CASCADE
             )
         """)
+
+        # Page summaries — AI-generated per-page summaries for hybrid search
+        cur.execute("SAVEPOINT before_page_summaries")
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS page_summaries (
+                    id            SERIAL PRIMARY KEY,
+                    document_id   INTEGER NOT NULL,
+                    page_num      INTEGER NOT NULL,
+                    summary       TEXT NOT NULL,
+                    search_vector TSVECTOR,
+                    FOREIGN KEY (document_id) REFERENCES fund_documents(id) ON DELETE CASCADE
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_page_summaries_doc
+                ON page_summaries(document_id)
+            """)
+            cur.execute("RELEASE SAVEPOINT before_page_summaries")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT before_page_summaries")
+
+        # Migrations for new fund_documents columns
+        for col, defn in [
+            ("ai_doc_type", "TEXT DEFAULT ''"),
+            ("summary",     "TEXT DEFAULT ''"),
+            ("key_topics",  "TEXT DEFAULT '[]'"),
+            ("page_count",  "INTEGER DEFAULT 0"),
+            ("search_meta", "TSVECTOR"),
+        ]:
+            cur.execute(f"""
+                ALTER TABLE fund_documents ADD COLUMN IF NOT EXISTS {col} {defn}
+            """)
 
         # Investor sessions
         cur.execute("""
@@ -334,20 +372,6 @@ def init_db():
             )
         """)
 
-        # Agent memory — per-agent, per-investor learnings
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS agent_memory (
-                id                  SERIAL PRIMARY KEY,
-                agent_id            INTEGER NOT NULL,
-                investor_session_id INTEGER NOT NULL,
-                memory_type         TEXT NOT NULL DEFAULT 'learning',
-                content             TEXT NOT NULL,
-                created_at          TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (agent_id) REFERENCES marketplace_agents(id) ON DELETE CASCADE,
-                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE
-            )
-        """)
-
         # Agent Marketplace
         cur.execute("""
             CREATE TABLE IF NOT EXISTS marketplace_agents (
@@ -361,6 +385,19 @@ def init_db():
                 knowledge   TEXT DEFAULT '',
                 is_active   INTEGER NOT NULL DEFAULT 1,
                 created_at  TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        # Agent memory — per-agent, per-investor learnings (after marketplace_agents)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_memory (
+                id                  SERIAL PRIMARY KEY,
+                agent_id            INTEGER NOT NULL,
+                investor_session_id INTEGER NOT NULL,
+                memory_type         TEXT NOT NULL DEFAULT 'learning',
+                content             TEXT NOT NULL,
+                created_at          TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (agent_id) REFERENCES marketplace_agents(id) ON DELETE CASCADE,
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE
             )
         """)
         cur.execute("""
@@ -808,6 +845,17 @@ def change_user_password(user_id: int, current_password: str, new_password: str)
 
 # ── Documents ──────────────────────────────────────────────────────────────────
 
+def get_fund_document(doc_id: int) -> dict:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM fund_documents WHERE id=%s", (doc_id,))
+        row = cur.fetchone()
+        return _row(dict(row)) if row else {}
+    finally:
+        put_db(conn)
+
+
 def list_fund_documents() -> list:
     conn = get_db()
     try:
@@ -863,41 +911,90 @@ def _to_tsquery(query: str) -> str:
     return " & ".join(terms)
 
 
-def search_fund_documents(query: str, limit: int = 6) -> list:
+def search_fund_documents(query: str, limit: int = 8) -> list:
+    """
+    Hybrid 3-layer search:
+    Layer 1 — document metadata/summary (boost x2)
+    Layer 2 — page summaries (boost x1.5)
+    Layer 3 — chunk full-text (base score)
+    Results are combined, deduplicated, and ranked by total score.
+    Falls back to ILIKE if no FTS results.
+    """
     tsq = _to_tsquery(query)
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        rows = []
+
         if tsq:
             try:
                 cur.execute("""
-                    SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
-                           d.name as doc_name, d.doc_type, d.id as document_id,
-                           ts_rank(dc.search_vector, to_tsquery('english', %s)) as score
-                    FROM document_chunks dc
-                    JOIN fund_documents d ON dc.document_id = d.id
-                    WHERE dc.search_vector @@ to_tsquery('english', %s)
-                      AND d.status = 'active'
-                    ORDER BY score DESC
+                    WITH
+                    -- Layer 1: document-level metadata match
+                    meta_boost AS (
+                        SELECT id as doc_id,
+                               ts_rank(search_meta, to_tsquery('english', %s)) * 2.0 as bonus
+                        FROM fund_documents
+                        WHERE search_meta @@ to_tsquery('english', %s)
+                          AND status = 'active'
+                    ),
+                    -- Layer 2: page summary match
+                    page_boost AS (
+                        SELECT ps.document_id as doc_id,
+                               'p.' || ps.page_num::text as page_ref,
+                               ts_rank(ps.search_vector, to_tsquery('english', %s)) * 1.5 as bonus,
+                               ps.summary as page_summary
+                        FROM page_summaries ps
+                        JOIN fund_documents d ON d.id = ps.document_id
+                        WHERE ps.search_vector @@ to_tsquery('english', %s)
+                          AND d.status = 'active'
+                    ),
+                    -- Layer 3: chunk scores
+                    chunk_scores AS (
+                        SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
+                               d.name as doc_name, d.doc_type, d.ai_doc_type,
+                               d.summary as doc_summary, d.id as document_id,
+                               COALESCE(ts_rank(dc.search_vector, to_tsquery('english', %s)), 0) as base_score
+                        FROM document_chunks dc
+                        JOIN fund_documents d ON dc.document_id = d.id
+                        WHERE d.status = 'active'
+                          AND (
+                              dc.search_vector @@ to_tsquery('english', %s)
+                              OR d.id IN (SELECT doc_id FROM meta_boost)
+                              OR d.id IN (SELECT doc_id FROM page_boost)
+                          )
+                    )
+                    SELECT cs.*,
+                           COALESCE(mb.bonus, 0) as meta_bonus,
+                           COALESCE(pb.bonus, 0) as page_bonus,
+                           (cs.base_score
+                            + COALESCE(mb.bonus, 0)
+                            + COALESCE(pb.bonus, 0)) as total_score
+                    FROM chunk_scores cs
+                    LEFT JOIN meta_boost mb ON mb.doc_id = cs.document_id
+                    LEFT JOIN page_boost pb ON pb.doc_id = cs.document_id
+                                           AND pb.page_ref = cs.page_ref
+                    ORDER BY total_score DESC
                     LIMIT %s
-                """, (tsq, tsq, limit))
-                rows = cur.fetchall()
+                """, (tsq, tsq, tsq, tsq, tsq, tsq, limit))
+                rows = [dict(r) for r in cur.fetchall()]
+                if rows:
+                    return rows
             except Exception:
                 conn.rollback()
-                rows = []
-        if not rows:
-            cur.execute("""
-                SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
-                       d.name as doc_name, d.doc_type, d.id as document_id,
-                       0.0 as score
-                FROM document_chunks dc
-                JOIN fund_documents d ON dc.document_id = d.id
-                WHERE dc.chunk_text ILIKE %s AND d.status = 'active'
-                LIMIT %s
-            """, (f"%{query}%", limit))
-            rows = cur.fetchall()
-        return list(rows)
+
+        # Fallback: ILIKE on chunks
+        cur.execute("""
+            SELECT dc.chunk_text, dc.page_ref, dc.section_ref,
+                   d.name as doc_name, d.doc_type, d.ai_doc_type,
+                   d.summary as doc_summary, d.id as document_id,
+                   0.0 as base_score, 0.0 as meta_bonus,
+                   0.0 as page_bonus, 0.0 as total_score
+            FROM document_chunks dc
+            JOIN fund_documents d ON dc.document_id = d.id
+            WHERE dc.chunk_text ILIKE %s AND d.status = 'active'
+            LIMIT %s
+        """, (f"%{query}%", limit))
+        return [dict(r) for r in cur.fetchall()]
     finally:
         put_db(conn)
 

@@ -116,6 +116,18 @@
     .status-bubble { display: flex; align-items: center; gap: .5rem; font-size: .82rem; color: #6b7a99; padding: .3rem 0; }
     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #c9a84c; animation: blink 1.2s infinite; }
 
+    /* Thinking steps panel */
+    .thinking-panel { background: #f8f9fc; border: 1px solid #e2e8f0; border-radius: 10px; padding: .6rem .85rem; margin: .35rem 0; max-width: 88%; font-size: .78rem; }
+    .thinking-panel-title { display: flex; align-items: center; gap: .4rem; font-size: .72rem; font-weight: 700; color: #6b7a99; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .4rem; }
+    .thinking-spinner { width: 8px; height: 8px; border-radius: 50%; background: #c9a84c; animation: blink 1.2s infinite; flex-shrink: 0; }
+    .thinking-step { display: flex; align-items: flex-start; gap: .45rem; padding: .2rem 0; color: #4a5568; line-height: 1.4; border-top: 1px solid #edf0f7; }
+    .thinking-step:first-of-type { border-top: none; }
+    .thinking-step-icon { flex-shrink: 0; font-size: .9rem; margin-top: .05rem; }
+    .thinking-step-text { flex: 1; color: #4a5568; }
+    .thinking-step.done .thinking-step-icon { opacity: .6; }
+    .thinking-step.loop { color: #7c3aed; font-style: italic; }
+    .thinking-step.loop .thinking-step-text { color: #7c3aed; }
+
     /* Confidence badge */
     .conf-badge { display: inline-block; padding: .15rem .45rem; border-radius: 4px; font-size: .68rem; font-weight: 700; text-transform: uppercase; }
     .conf-high { background: #d4edda; color: #155724; }
@@ -145,6 +157,13 @@
     .source-section { color: #6b7a99; font-size: .78rem; margin-bottom: .35rem; }
     .source-excerpt { color: #1a2433; line-height: 1.5; font-style: italic; }
     .portal-sources-empty { color: #6b7a99; font-size: .85rem; text-align: center; padding: 1rem 0; }
+
+    /* Inline doc chips inside answer bubble */
+    .msg-doc-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .6rem; padding-top: .5rem; border-top: 1px solid #e8ecf4; }
+    .doc-chip { display: inline-flex; align-items: center; gap: .3rem; font-size: .72rem; font-weight: 600;
+      color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 999px;
+      padding: .2rem .65rem; text-decoration: none; white-space: nowrap; transition: background .15s; }
+    .doc-chip:hover { background: #dbeafe; }
   </style>
 </head>
 <body>
@@ -379,6 +398,14 @@ document.querySelectorAll(".msg-content.js-format").forEach(el => {
 (function loadLastSources() {
   const bubbles = [...document.querySelectorAll(".msg-bubble.assistant[data-sources]")];
   if (!bubbles.length) return;
+  // Add doc chips to ALL historical assistant bubbles
+  bubbles.forEach(bubble => {
+    try {
+      const sources = JSON.parse(bubble.dataset.sources || "[]");
+      renderDocChips(sources, bubble);
+    } catch(e) {}
+  });
+  // Show last message's sources in the side panel
   try { renderSources(JSON.parse(bubbles[bubbles.length - 1].dataset.sources || "[]")); } catch(e) {}
 })();
 
@@ -430,6 +457,22 @@ function formatMsg(text) {
   }
   if (inList) out.push(`</${listType}>`);
   return out.join('');
+}
+
+function renderDocChips(sources, bubble) {
+  if (!bubble) return;
+  const existing = bubble.querySelector(".msg-doc-chips");
+  if (existing) existing.remove();
+  const viewable = (sources || []).filter(s => s.doc_id);
+  if (!viewable.length) return;
+  const seen = new Set();
+  const unique = viewable.filter(s => { if (seen.has(s.doc_id)) return false; seen.add(s.doc_id); return true; });
+  const chips = document.createElement("div");
+  chips.className = "msg-doc-chips";
+  chips.innerHTML = unique.map(s =>
+    `<a href="/investor/documents/${s.doc_id}/view" target="_blank" class="doc-chip">📄 ${escHtml((s.doc_name||'Document').replace(/\.[^.]+$/,''))}</a>`
+  ).join('');
+  bubble.querySelector(".msg-content").after(chips);
 }
 
 function renderSources(sources) {
@@ -575,6 +618,34 @@ function addStatusBubble(text) {
   scrollBottom();
 }
 
+function getOrCreateThinkingPanel() {
+  let panel = document.getElementById("thinkingPanel");
+  if (!panel) {
+    removeStatus();
+    panel = document.createElement("div");
+    panel.id = "thinkingPanel";
+    panel.className = "thinking-panel";
+    panel.innerHTML = `<div class="thinking-panel-title"><span class="thinking-spinner"></span>Search Agent — searching documents…</div><div id="thinkingSteps"></div>`;
+    messagesEl.appendChild(panel);
+  }
+  return panel;
+}
+
+function addThinkingStep(icon, text, isLoop) {
+  getOrCreateThinkingPanel();
+  const steps = document.getElementById("thinkingSteps");
+  const step = document.createElement("div");
+  step.className = "thinking-step" + (isLoop ? " loop" : "");
+  step.innerHTML = `<span class="thinking-step-icon">${icon}</span><span class="thinking-step-text">${escHtml(text)}</span>`;
+  steps.appendChild(step);
+  scrollBottom();
+}
+
+function removeThinkingPanel() {
+  const p = document.getElementById("thinkingPanel");
+  if (p) p.remove();
+}
+
 function addAssistantBubble(data) {
   removeStatus();
   const conf = data.confidence || "medium";
@@ -586,6 +657,7 @@ function addAssistantBubble(data) {
     <div class="msg-meta">AI Assistant${srcCount?` · ${srcCount} source${srcCount!==1?"s":""}`:""} · <span class="conf-badge conf-${conf}">${conf}</span></div>
   `;
   messagesEl.appendChild(div);
+  renderDocChips(data.sources || [], div);
   renderSources(data.sources || []);
   scrollBottom();
 
@@ -622,7 +694,7 @@ function sendQuestion() {
   questionEl.value = "";
   questionEl.style.height = "auto";
   addUserBubble(q);
-  addStatusBubble("Searching fund documents…");
+  addThinkingStep("📄", "Starting document search…", false);
 
   let streamBubble = null;   // the growing assistant bubble
   let streamText = "";       // accumulated text so far
@@ -651,40 +723,49 @@ function sendQuestion() {
   es.onmessage = evt => {
     try {
       const data = JSON.parse(evt.data);
-      if (data.type === "tool_call") {
-        addStatusBubble("Searching documents…");
+
+      if (data.type === "thinking") {
+        const icon = data.icon || "⚙️";
+        const text = data.text || "";
+        const isLoop = text.startsWith("Search agent") || text.startsWith("Low confidence") || text.includes("retry") || text.includes("Retry");
+        addThinkingStep(icon, text, isLoop);
+
       } else if (data.type === "token") {
-        // Accumulate and re-render with formatting on each word
+        removeThinkingPanel();
+        removeStatus();
         const bubble = getOrCreateStreamBubble();
         streamText += data.text;
         const content = bubble.querySelector(".msg-content");
-        // Render formatted text, re-append cursor at end
         content.innerHTML = formatMsg(streamText);
         content.appendChild(cursor);
         scrollBottom();
+
       } else if (data.type === "result") {
         es.close();
         sendBtn.disabled = false;
         lastMessageId = lastMessageId + 2;
+        removeThinkingPanel();
+        removeStatus();
         const d = data.data;
         if (streamBubble) {
-          // Finalise: full formatted answer, remove cursor, update meta
           if (cursor) cursor.remove();
           const conf = d.confidence || "medium";
           const srcCount = (d.sources || []).length;
           streamBubble.querySelector(".msg-content").innerHTML = formatMsg(d.answer || streamText);
           streamBubble.querySelector(".msg-meta").innerHTML =
             `AI Assistant${srcCount ? ` · ${srcCount} source${srcCount !== 1 ? "s" : ""}` : ""} · <span class="conf-badge conf-${conf}">${conf}</span>`;
+          renderDocChips(d.sources || [], streamBubble);
           renderSources(d.sources || []);
           if (!d._kb_match && conf === "low") {
             setTimeout(showHandoverBanner, 600);
           }
         } else {
-          // KB answer — no tokens, render immediately
           addAssistantBubble(d);
         }
         streamBubble = null; streamText = ""; cursor = null;
+
       } else if (data.type === "error") {
+        removeThinkingPanel();
         removeStatus();
         if (cursor) cursor.remove();
         addSystemBubble("An error occurred. Please try again.");
@@ -695,6 +776,7 @@ function sendQuestion() {
     } catch(e) {}
   };
   es.onerror = () => {
+    removeThinkingPanel();
     removeStatus();
     if (cursor) cursor.remove();
     sendBtn.disabled = false;
