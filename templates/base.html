@@ -56,6 +56,12 @@
       <a href="{{ url_for('agent_marketplace') }}" class="nav-item {% if request.endpoint in ['agent_marketplace','agent_marketplace_assign'] %}active{% endif %}">
         <span class="nav-icon">🤖</span> Agent Marketplace
       </a>
+      <a href="{{ url_for('plugins_dashboard') }}" class="nav-item {% if request.endpoint == 'plugins_dashboard' %}active{% endif %}">
+        <span class="nav-icon">🔌</span> Plugins
+      </a>
+      <a href="{{ url_for('fund_research') }}" class="nav-item {% if request.endpoint in ['fund_research','fund_research_report'] %}active{% endif %}">
+        <span class="nav-icon">⚠️</span> Fund Research
+      </a>
       {% if user.role == 'admin' %}
       <a href="{{ url_for('team') }}" class="nav-item {% if request.endpoint == 'team' %}active{% endif %}">
         <span class="nav-icon">◉</span> Team

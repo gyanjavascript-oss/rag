@@ -1,0 +1,683 @@
+{% extends "base.html" %}
+{% block title %}Plugins{% endblock %}
+
+{% block head %}
+<style>
+/* ── Plugin page ─────────────────────────────────────────────────────────── */
+.plugin-tabs {
+  display: flex; gap: .4rem; flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+.plugin-tab {
+  padding: .45rem .95rem; border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--white); color: var(--muted);
+  cursor: pointer; font-size: .82rem; font-weight: 500;
+  transition: all .15s; white-space: nowrap;
+}
+.plugin-tab:hover { border-color: var(--navy); color: var(--navy); }
+.plugin-tab.active { background: var(--navy); color: var(--white); border-color: var(--navy); }
+
+.plugin-panel { display: none; }
+.plugin-panel.active { display: block; }
+
+/* Inside a card but needs its own padding */
+.p-card { padding: 1.5rem; }
+
+/* Plugin meta row */
+.plugin-meta {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap;
+}
+.plugin-desc { font-size: .875rem; color: var(--muted); margin-top: .3rem; max-width: 620px; line-height: 1.55; }
+.pill-new {
+  display: inline-block; padding: .2rem .65rem; border-radius: 20px;
+  font-size: .7rem; font-weight: 700; white-space: nowrap; flex-shrink: 0;
+  background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+}
+
+/* Run row */
+.run-row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+
+/* Result area */
+.plugin-result {
+  margin-top: 1.25rem; border-top: 1px solid var(--border);
+  padding-top: 1.25rem; display: none;
+}
+.plugin-result.visible { display: block; }
+
+/* Summary callout */
+.res-summary {
+  padding: .75rem 1rem 0.75rem 1rem;
+  background: var(--bg); border-radius: 6px;
+  border-left: 3px solid var(--navy);
+  font-size: .875rem; color: var(--text);
+  margin-bottom: 1rem;
+}
+
+/* Section label */
+.res-label {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); margin: 1rem 0 .6rem;
+}
+
+/* Cards grid for results */
+.res-grid { display: grid; gap: .65rem; }
+.res-card {
+  padding: .9rem 1rem; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg);
+}
+.res-card-title { font-weight: 600; font-size: .875rem; margin-bottom: .35rem; }
+.res-card-body { font-size: .835rem; color: var(--muted); }
+
+/* Severity pills */
+.sev {
+  display: inline-block; padding: .15rem .5rem;
+  border-radius: 12px; font-size: .7rem; font-weight: 700; white-space: nowrap;
+}
+.sev-high   { background: #fee2e2; color: #b91c1c; }
+.sev-medium { background: #fef3c7; color: #92400e; }
+.sev-low    { background: #d1fae5; color: #065f46; }
+.sev-good   { background: #d1fae5; color: #065f46; }
+.sev-partial { background: #fef3c7; color: #92400e; }
+.sev-missing { background: #fee2e2; color: #b91c1c; }
+
+/* Coverage bar */
+.cov-bar-wrap { height: 5px; border-radius: 3px; background: var(--border); margin: .5rem 0; }
+.cov-bar { height: 5px; border-radius: 3px; }
+.cov-good .cov-bar   { background: #10b981; }
+.cov-partial .cov-bar { background: #f59e0b; }
+.cov-missing .cov-bar { background: #ef4444; }
+
+/* ESG row */
+.esg-row {
+  display: flex; gap: .75rem; padding: .75rem 0;
+  border-bottom: 1px solid var(--bg2); align-items: flex-start;
+}
+.esg-row:last-child { border-bottom: none; }
+.esg-row-icon { font-size: .95rem; margin-top: .1rem; flex-shrink: 0; }
+.esg-row-title { font-weight: 600; font-size: .835rem; }
+.esg-row-body  { font-size: .81rem; color: var(--muted); margin-top: .15rem; }
+
+/* Email draft */
+.email-draft {
+  background: #fffbeb; border: 1px solid var(--gold);
+  border-radius: 6px; padding: .9rem 1rem; font-size: .835rem;
+}
+.email-subject { font-weight: 700; margin-bottom: .45rem; color: var(--navy); }
+.email-body { white-space: pre-wrap; color: var(--text); line-height: 1.55; }
+
+/* Inputs */
+.plug-select {
+  padding: .5rem .85rem; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--white);
+  color: var(--text); font-size: .875rem; min-width: 220px;
+}
+.plug-input {
+  padding: .5rem .85rem; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--white);
+  color: var(--text); font-size: .875rem; min-width: 280px;
+}
+.plug-select:focus, .plug-input:focus {
+  outline: none; border-color: var(--navy);
+  box-shadow: 0 0 0 3px rgba(15,31,61,.08);
+}
+
+/* Spinner inside button */
+.btn-spinner {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+  border-radius: 50%; animation: btnSpin .7s linear infinite; vertical-align: -2px;
+}
+@keyframes btnSpin { to { transform: rotate(360deg); } }
+
+/* Adapted lang block */
+.adapted-block {
+  margin-top: .4rem; padding: .5rem .75rem;
+  background: var(--white); border-radius: 5px;
+  border-left: 3px solid var(--accent); font-size: .825rem;
+}
+
+/* Big score number */
+.score-big { font-size: 2.2rem; font-weight: 800; color: var(--navy); line-height: 1; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">🔌 Plugins</h1>
+    <p class="page-sub">8 intelligence plugins not available in any other DDQ platform.</p>
+  </div>
+</div>
+
+<!-- Tab bar -->
+<div class="plugin-tabs">
+  <button class="plugin-tab {% if active_tab=='consistency' %}active{% endif %}" onclick="switchTab('consistency',this)">⚖️ Consistency Audit</button>
+  <button class="plugin-tab {% if active_tab=='gap' %}active{% endif %}" onclick="switchTab('gap',this)">🔍 Gap Report</button>
+  <button class="plugin-tab {% if active_tab=='memory' %}active{% endif %}" onclick="switchTab('memory',this)">🧠 Investor Memory</button>
+  <button class="plugin-tab {% if active_tab=='staleness' %}active{% endif %}" onclick="switchTab('staleness',this)">⏱ Staleness Monitor</button>
+  <button class="plugin-tab {% if active_tab=='edgar' %}active{% endif %}" onclick="switchTab('edgar',this)">🏛 SEC/EDGAR Sync</button>
+  <button class="plugin-tab {% if active_tab=='esg' %}active{% endif %}" onclick="switchTab('esg',this)">🌿 ESG Auto-Fill</button>
+  <button class="plugin-tab {% if active_tab=='jurisdiction' %}active{% endif %}" onclick="switchTab('jurisdiction',this)">🌐 Jurisdiction Map</button>
+  <button class="plugin-tab {% if active_tab=='orchestrator' %}active{% endif %}" onclick="switchTab('orchestrator',this)">📬 LP Update Drafts</button>
+</div>
+
+
+<!-- ── 1. Consistency Audit ─────────────────────────────────────────────── -->
+<div id="tab-consistency" class="plugin-panel {% if active_tab=='consistency' %}active{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">⚖️ Cross-DDQ Consistency Auditor</h2>
+      <span class="pill-new">Not available elsewhere</span>
+    </div>
+    <div class="p-card">
+      <p class="plugin-desc">Compares one LP session's answers against every other session — finds genuine factual contradictions (strategy, AUM, team, hold period, fees) that would be damaging if LPs compared notes.</p>
+      <div class="run-row" style="margin-top:1rem;">
+        <select id="consistency-session" class="plug-select">
+          <option value="">— Select investor session —</option>
+          {% for s in investor_sessions %}
+          <option value="{{ s.id }}">{{ s.investor_name }}{% if s.investor_entity %} · {{ s.investor_entity }}{% endif %}</option>
+          {% endfor %}
+        </select>
+        <button class="btn-primary" id="consistency-btn" onclick="runPlugin('consistency')">Run Audit</button>
+      </div>
+      <div id="consistency-result" class="plugin-result">
+        <div class="res-summary" id="consistency-summary"></div>
+        <div id="consistency-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── 2. Gap Report ────────────────────────────────────────────────────── -->
+<div id="tab-gap" class="plugin-panel {% if active_tab=='gap' %}active{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">🔍 LP Question Pattern + Document Gap Report</h2>
+      <span class="pill-new">Not available elsewhere</span>
+    </div>
+    <div class="p-card">
+      <p class="plugin-desc">Clusters all investor questions by topic, scores documentation coverage per topic, and generates a prioritised document production backlog — telling you exactly what policies and memos to write next.</p>
+      <div class="run-row" style="margin-top:1rem;">
+        <button class="btn-primary" id="gap-btn" onclick="runPlugin('gap')">Run Gap Analysis</button>
+      </div>
+      <div id="gap-result" class="plugin-result">
+        <div class="res-summary" id="gap-summary"></div>
+        <div id="gap-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── 3. Investor Memory ───────────────────────────────────────────────── -->
+<div id="tab-memory" class="plugin-panel {% if active_tab=='memory' %}active{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">🧠 Investor-Specific Memory Layer</h2>
+      <span class="pill-new">Not available elsewhere</span>
+    </div>
+    <div class="p-card">
+      <p class="plugin-desc">Analyses all past conversations with an LP to build a preference profile: focus areas, response style, sensitivity topics, jurisdiction, and follow-up patterns. The profile is automatically injected into future answer generation for this investor.</p>
+      <div class="run-row" style="margin-top:1rem;">
+        <select id="memory-session" class="plug-select">
+          <option value="">— Select investor session —</option>
+          {% for s in investor_sessions %}
+          <option value="{{ s.id }}">{{ s.investor_name }}{% if s.investor_entity %} · {{ s.investor_entity }}{% endif %}</option>
+          {% endfor %}
+        </select>
+        <button class="btn-primary" id="memory-btn" onclick="runPlugin('memory')">Build Profile</button>
+      </div>
+      <div id="memory-result" class="plugin-result">
+        <div class="res-summary" id="memory-summary"></div>
+        <div id="memory-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── 4. Staleness Monitor ─────────────────────────────────────────────── -->
+<div id="tab-staleness" class="plugin-panel {% if active_tab=='staleness' %}active{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">⏱ Staleness Monitor</h2>
+      <span class="pill-new">Not available elsewhere</span>
+    </div>
+    <div class="p-card">
+      <p class="plugin-desc">Reviews all past DDQ answers and flags those likely outdated — specifically answers older than 60 days that contain time-sensitive data such as AUM, IRR, team composition, NAV, or fund strategy.</p>
+      <div class="run-row" style="margin-top:1rem;">
+        <button class="btn-primary" id="staleness-btn" onclick="runPlugin('staleness')">Scan All Answers</button>
+      </div>
+      <div id="staleness-result" class="plugin-result">
+        <div class="res-summary" id="staleness-summary"></div>
+        <div id="staleness-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── 5. EDGAR Sync ─────────────────────────────────────────────────────── -->
+<div id="tab-edgar" class="plugin-panel {% if active_tab=='edgar' %}active{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">🏛 SEC/EDGAR Regulatory Filing Sync</h2>
+      <span class="pill-new">Not available elsewhere</span>
+    </div>
+    <div class="p-card">
+      <p class="plugin-desc">Searches public SEC EDGAR for your fund's filings (Form ADV, Form D, Form PF) and cross-references them with your DDQ answers. Flags contradictions between what you've told LPs and what you've reported to the SEC.</p>
+      <div class="run-row" style="margin-top:1rem;">
+        <input id="edgar-name" class="plug-input" type="text" placeholder="Fund / adviser name (e.g. Acme Capital Management)" value="{{ fund_name }}">
+        <button class="btn-primary" id="edgar-btn" onclick="runPlugin('edgar')">Search EDGAR</button>
+      </div>
+      <div id="edgar-result" class="plugin-result">
+        <div class="res-summary" id="edgar-summary"></div>
+        <div id="edgar-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── 6. ESG Auto-Fill ──────────────────────────────────────────────────── -->
+<div id="tab-esg" class="plugin-panel {% if active_tab=='esg' %}active{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">🌿 ESG Auto-Population</h2>
+      <span class="pill-new">Not available elsewhere</span>
+    </div>
+    <div class="p-card">
+      <p class="plugin-desc">Scans all uploaded fund documents for ESG content and auto-populates the standard ILPA ESG DDQ sections: policy, responsible investment, exclusions, climate/TCFD, DEI, and reporting. Shows a coverage score and flags gaps.</p>
+      <div class="run-row" style="margin-top:1rem;">
+        <button class="btn-primary" id="esg-btn" onclick="runPlugin('esg')">Auto-Fill ESG Sections</button>
+      </div>
+      <div id="esg-result" class="plugin-result">
+        <div style="display:flex;align-items:center;gap:1.25rem;margin-bottom:1rem;">
+          <div class="score-big" id="esg-score">—</div>
+          <div style="flex:1;">
+            <div style="font-size:.78rem;color:var(--muted);margin-bottom:.3rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;">ESG Coverage Score</div>
+            <div class="cov-bar-wrap" style="margin:0;">
+              <div class="cov-bar" id="esg-bar" style="width:0%;background:var(--navy);"></div>
+            </div>
+          </div>
+        </div>
+        <div class="res-summary" id="esg-summary"></div>
+        <div id="esg-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── 7. Jurisdiction Map ───────────────────────────────────────────────── -->
+<div id="tab-jurisdiction" class="plugin-panel {% if active_tab=='jurisdiction' %}active{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">🌐 Jurisdiction + Regulatory Language Mapping</h2>
+      <span class="pill-new">Not available elsewhere</span>
+    </div>
+    <div class="p-card">
+      <p class="plugin-desc">Detects the LP's jurisdiction and regulatory regime from their entity name and uploaded documents. Provides adapted DDQ response language compliant with local rules (AIFMD, FSA-Japan, MAS-Singapore, SFC-HK, DIFC, etc.).</p>
+      <div class="run-row" style="margin-top:1rem;">
+        <select id="jurisdiction-session" class="plug-select">
+          <option value="">— Select investor session —</option>
+          {% for s in investor_sessions %}
+          <option value="{{ s.id }}">{{ s.investor_name }}{% if s.investor_entity %} · {{ s.investor_entity }}{% endif %}</option>
+          {% endfor %}
+        </select>
+        <button class="btn-primary" id="jurisdiction-btn" onclick="runPlugin('jurisdiction')">Detect &amp; Map</button>
+      </div>
+      <div id="jurisdiction-result" class="plugin-result">
+        <div class="res-summary" id="jurisdiction-summary"></div>
+        <div id="jurisdiction-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── 8. LP Update Orchestrator ─────────────────────────────────────────── -->
+<div id="tab-orchestrator" class="plugin-panel {% if active_tab=='orchestrator' %}active{% endif %}">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">📬 Proactive LP Update Orchestrator</h2>
+      <span class="pill-new">Not available elsewhere</span>
+    </div>
+    <div class="p-card">
+      <p class="plugin-desc">Identifies investors who received answers that may now be materially inaccurate. For each affected LP, drafts a professional proactive update email — turning a compliance risk into a relationship-building touchpoint.</p>
+      <div class="run-row" style="margin-top:1rem;">
+        <button class="btn-primary" id="orchestrator-btn" onclick="runPlugin('orchestrator')">Generate Update Drafts</button>
+      </div>
+      <div id="orchestrator-result" class="plugin-result">
+        <div class="res-summary" id="orchestrator-summary"></div>
+        <div id="orchestrator-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script>
+// ── Tab switching ────────────────────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.plugin-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.plugin-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+// ── Severity helpers ──────────────────────────────────────────────────
+function sevPill(sev) {
+  const s = (sev || '').toLowerCase();
+  const cls = s === 'high' ? 'sev-high' : s === 'medium' ? 'sev-medium' : s === 'good' ? 'sev-good' : s === 'partial' ? 'sev-partial' : s === 'missing' ? 'sev-missing' : 'sev-low';
+  return `<span class="sev ${cls}">${sev || s}</span>`;
+}
+
+// ── Generic runner ────────────────────────────────────────────────────
+const ENDPOINTS = {
+  consistency: '/api/plugins/consistency-audit',
+  gap:         '/api/plugins/gap-report',
+  memory:      '/api/plugins/investor-memory',
+  staleness:   '/api/plugins/staleness',
+  edgar:       '/api/plugins/edgar-sync',
+  esg:         '/api/plugins/esg-autopop',
+  jurisdiction:'/api/plugins/jurisdiction',
+  orchestrator:'/api/plugins/staleness-orchestrator',
+};
+
+async function runPlugin(name) {
+  const btn = document.getElementById(name + '-btn');
+  const resultDiv = document.getElementById(name + '-result');
+  const origText = btn.textContent;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="btn-spinner"></span> Running…';
+
+  let payload = {};
+  if (['consistency','memory','jurisdiction'].includes(name)) {
+    const sid = document.getElementById(name + '-session').value;
+    if (!sid) { alert('Please select an investor session first.'); resetBtn(btn, origText); return; }
+    payload = { session_id: parseInt(sid) };
+  } else if (name === 'edgar') {
+    payload = { fund_name: document.getElementById('edgar-name').value.trim() };
+  }
+
+  try {
+    const res = await fetch(ENDPOINTS[name], {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await res.text();
+      throw new Error(`Server returned non-JSON (HTTP ${res.status}). Check app logs. Preview: ${text.slice(0,200)}`);
+    }
+    const data = await res.json();
+    resultDiv.classList.add('visible');
+    render(name, data);
+  } catch (e) {
+    resultDiv.classList.add('visible');
+    document.getElementById(name + '-summary').textContent = '⚠ ' + e.message;
+    document.getElementById(name + '-body').innerHTML = '';
+  }
+  resetBtn(btn, origText);
+}
+
+function resetBtn(btn, text) {
+  btn.disabled = false;
+  btn.textContent = text;
+}
+
+// ── Renderers ──────────────────────────────────────────────────────────
+function render(name, d) {
+  if (d.error) {
+    document.getElementById(name + '-summary').textContent = '⚠ ' + d.error;
+    document.getElementById(name + '-body').innerHTML = '';
+    return;
+  }
+
+  // Set summary
+  const sumEl = document.getElementById(name + '-summary');
+  if (sumEl) sumEl.textContent = d.summary || '';
+  const bodyEl = document.getElementById(name + '-body');
+
+  if (name === 'consistency') {
+    const items = d.contradictions || [];
+    const modeLabel = d.mode === 'intra_session'
+      ? '⚠ Only one session exists — checked for internal inconsistencies within this session.'
+      : `Compared against ${d.sessions_compared || 'other'} answer(s) across other sessions.`;
+    let html = `<div style="font-size:.8rem;color:var(--muted);margin-bottom:.75rem;">${modeLabel}</div>`;
+    if (d.note) {
+      html += `<div class="gap-notice" style="margin-bottom:.75rem;">${esc(d.note)}</div>`;
+    }
+    if (!items.length) {
+      html += '<p style="color:var(--muted);font-size:.875rem;">✓ No contradictions found.</p>';
+    } else {
+      html += `<div class="res-label">Contradictions found (${items.length})</div>
+        <div class="res-grid">${items.map(c => `
+          <div class="res-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;">
+              <div class="res-card-title">${esc(c.topic)}</div>
+              ${sevPill(c.severity)}
+            </div>
+            <div class="res-card-body">
+              <div><strong>Claim A:</strong> ${esc(c.current_claim)}</div>
+              <div style="margin-top:.3rem;"><strong>${esc(c.lp||'Other session')}:</strong> ${esc(c.other_claim)}</div>
+              ${c.explanation ? `<div style="margin-top:.35rem;font-style:italic;">${esc(c.explanation)}</div>` : ''}
+            </div>
+          </div>`).join('')}</div>`;
+    }
+    bodyEl.innerHTML = html;
+  }
+
+  else if (name === 'gap') {
+    const clusters = d.clusters || [];
+    const backlog = d.backlog || [];
+    let html = '';
+    if (clusters.length) {
+      html += `<div class="res-label">Topic clusters (${clusters.length})</div><div class="res-grid">`;
+      clusters.forEach(c => {
+        const pct = c.coverage === 'good' ? 95 : c.coverage === 'partial' ? 50 : 8;
+        html += `<div class="res-card cov-${c.coverage||'missing'}">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div class="res-card-title">${esc(c.topic)} <span style="font-weight:400;color:var(--muted);font-size:.8rem;">(${c.count} questions)</span></div>
+            ${sevPill(c.coverage||'missing')}
+          </div>
+          <div class="cov-bar-wrap"><div class="cov-bar" style="width:${pct}%"></div></div>
+          <div class="res-card-body">${(c.example_questions||[]).slice(0,2).map(q=>`• ${esc(q)}`).join('<br>')}</div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    if (backlog.length) {
+      html += `<div class="res-label" style="margin-top:1.1rem;">Document production backlog (${backlog.length})</div><div class="res-grid">`;
+      backlog.forEach((b,i) => {
+        html += `<div class="res-card">
+          <div class="res-card-title">#${b.priority||i+1} — ${esc(b.document_title||b.document_type||'Unnamed')}</div>
+          <div class="res-card-body">
+            <strong>Type:</strong> ${esc(b.document_type||'—')} &nbsp;|&nbsp; <strong>Covers:</strong> ${b.covers_n_questions||'?'} question(s)<br>
+            <span style="margin-top:.3rem;display:block;">${esc(b.why||'')}</span>
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    bodyEl.innerHTML = html || '<p style="color:var(--muted);font-size:.875rem;margin-top:.5rem;">No clusters or backlog generated.</p>';
+  }
+
+  else if (name === 'memory') {
+    if (d.error) { bodyEl.innerHTML = ''; return; }
+    const rows = [
+      ['Focus Areas', (d.focus_areas||[]).join(', ')],
+      ['Response Style', d.response_style_preference],
+      ['Sophistication', d.sophistication_level],
+      ['Jurisdiction', d.jurisdiction],
+      ['Key Concerns', (d.key_concerns||[]).join(', ')],
+      ['Sensitivity Areas', (d.sensitivity_areas||[]).join(', ')],
+      ['Recommended Tone', d.recommended_tone],
+      ['Follow-up Patterns', (d.follow_up_patterns||[]).join(', ')],
+    ].filter(r => r[1]);
+    bodyEl.innerHTML = `<div class="res-label">Profile details</div>
+      <div class="res-grid">${rows.map(r => `
+        <div class="res-card" style="display:flex;gap:.75rem;padding:.7rem .9rem;">
+          <div style="font-weight:600;font-size:.8rem;color:var(--muted);min-width:140px;flex-shrink:0;">${r[0]}</div>
+          <div style="font-size:.845rem;">${esc(r[1])}</div>
+        </div>`).join('')}</div>
+      <p style="color:var(--muted);font-size:.78rem;margin-top:.75rem;">✓ Saved — will be used automatically in future answers for this LP.</p>`;
+  }
+
+  else if (name === 'staleness') {
+    const alerts = d.alerts || [];
+    if (!alerts.length) { bodyEl.innerHTML = '<p style="color:var(--muted);margin-top:.75rem;font-size:.875rem;">✓ No stale answers detected.</p>'; return; }
+    bodyEl.innerHTML = `<div class="res-label">Stale answers (${alerts.length})</div>
+      <div class="res-grid">${alerts.map(a => `
+        <div class="res-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem;">
+            <div class="res-card-title">${esc(a.investor)} — ${esc(a.conversation)}</div>
+            ${sevPill(a.severity + ' risk')}
+          </div>
+          <div class="res-card-body">
+            <strong>${a.age_days} days old</strong> · Stale data: ${(a.stale_content_type||[]).join(', ')}<br>
+            <span style="display:block;margin-top:.3rem;">${esc(a.answer_preview)}</span>
+          </div>
+        </div>`).join('')}</div>`;
+  }
+
+  else if (name === 'edgar') {
+    const filings = d.filings || [];
+    const conflicts = d.conflicts || [];
+    let html = '';
+    if (filings.length) {
+      html += `<div class="res-label">EDGAR filings (${filings.length})</div><div class="res-grid">`;
+      filings.forEach(f => {
+        html += `<div class="res-card">
+          <div class="res-card-title">${esc(f.form_type)} — ${esc(f.entity_name)}</div>
+          <div class="res-card-body">
+            Filed: ${esc(f.file_date||'—')} &nbsp;|&nbsp; CIK: ${esc(f.cik||'—')}
+            ${f.description ? `<br>${esc(f.description)}` : ''}
+            ${f.edgar_url ? `<br><a href="${f.edgar_url}" target="_blank" style="color:var(--accent);font-size:.8rem;">View on EDGAR ↗</a>` : ''}
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+    } else {
+      html += '<p style="color:var(--muted);font-size:.875rem;margin-top:.5rem;">No EDGAR filings found for the searched name.</p>';
+    }
+    if (conflicts.length) {
+      html += `<div class="res-label" style="margin-top:1.1rem;">Potential DDQ conflicts (${conflicts.length})</div><div class="res-grid">`;
+      conflicts.forEach(c => {
+        html += `<div class="res-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem;">
+            <div class="res-card-title">${esc(c.topic)}</div>${sevPill(c.risk+' risk')}
+          </div>
+          <div class="res-card-body">
+            <div><strong>Filing says:</strong> ${esc(c.filing_says)}</div>
+            <div style="margin-top:.25rem;"><strong>DDQ says:</strong> ${esc(c.ddq_says)}</div>
+            ${c.explanation ? `<div style="margin-top:.3rem;font-style:italic;">${esc(c.explanation)}</div>` : ''}
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    bodyEl.innerHTML = html;
+  }
+
+  else if (name === 'esg') {
+    document.getElementById('esg-score').textContent = (d.coverage_score || 0) + '%';
+    document.getElementById('esg-bar').style.width = (d.coverage_score || 0) + '%';
+    const sections = [
+      { key:'esg_policy',            icon:'📋', title:'ESG Policy',
+        fmt: v => v ? `Has policy: <strong>${v.has_policy?'Yes':'No'}</strong>. ${esc(v.description||'')}` : 'Not documented' },
+      { key:'responsible_investment', icon:'🤝', title:'Responsible Investment',
+        fmt: v => v ? `Framework: <strong>${esc(v.framework||'none')}</strong>. PRI Signatory: <strong>${v.signatory?'Yes':'No'}</strong>. ${esc(v.details||'')}` : 'Not documented' },
+      { key:'esg_integration',        icon:'🔗', title:'ESG Integration',
+        fmt: v => v ? esc([v.how_integrated, v.pre_investment?'Pre: '+v.pre_investment:'', v.post_investment?'Post: '+v.post_investment:''].filter(Boolean).join(' · ')) : 'Not documented' },
+      { key:'exclusions',             icon:'🚫', title:'Exclusion Policy',
+        fmt: v => v ? `Has exclusion list: <strong>${v.has_exclusion_list?'Yes':'No'}</strong>. Excluded: ${esc((v.excluded_sectors||[]).join(', ')||'none')}` : 'Not documented' },
+      { key:'climate',                icon:'🌡', title:'Climate / TCFD',
+        fmt: v => v ? `Has climate policy: <strong>${v.has_climate_policy?'Yes':'No'}</strong>. TCFD aligned: <strong>${v.tcfd_aligned?'Yes':'No'}</strong>. ${esc(v.details||'')}` : 'Not documented' },
+      { key:'diversity',              icon:'👥', title:'Diversity & Inclusion',
+        fmt: v => v ? esc([v.dei_policy, v.team_diversity_data].filter(Boolean).join(' · ')) : 'Not documented' },
+      { key:'reporting',              icon:'📊', title:'ESG Reporting',
+        fmt: v => v ? `Frequency: <strong>${esc(v.esg_reporting_frequency||'—')}</strong>. Format: ${esc(v.format||'—')}` : 'Not documented' },
+    ];
+    let html = '<div class="res-label">ILPA ESG DDQ sections</div>';
+    sections.forEach(s => {
+      html += `<div class="esg-row">
+        <div class="esg-row-icon">${s.icon}</div>
+        <div style="flex:1;">
+          <div class="esg-row-title">${s.title}</div>
+          <div class="esg-row-body">${s.fmt(d[s.key])}</div>
+        </div>
+      </div>`;
+    });
+    const missing = d.missing_sections || [];
+    if (missing.length) {
+      html += `<div class="res-label" style="margin-top:1rem;">Missing sections</div>
+        <ul style="padding-left:1.2rem;color:var(--muted);font-size:.835rem;">${missing.map(m=>`<li>${esc(m)}</li>`).join('')}</ul>`;
+    }
+    bodyEl.innerHTML = html;
+  }
+
+  else if (name === 'jurisdiction') {
+    sumEl.innerHTML = `<strong>${esc(d.detected_jurisdiction||'Unknown jurisdiction')}</strong> — ${esc(d.regulatory_regime||'—')} &nbsp;${sevPill(d.confidence+' confidence')}<br><span style="color:var(--muted);font-size:.83rem;">${esc(d.summary||'')}</span>`;
+    const adaptations = d.language_adaptations || [];
+    const flags = d.flags || [];
+    const disclosures = d.required_disclosures || [];
+    let html = '';
+    if (adaptations.length) {
+      html += `<div class="res-label">Language adaptations (${adaptations.length})</div><div class="res-grid">`;
+      adaptations.forEach(a => {
+        html += `<div class="res-card">
+          <div class="res-card-title">${esc(a.topic)}</div>
+          <div class="res-card-body">
+            <div><strong>Standard:</strong> ${esc(a.standard_language)}</div>
+            <div class="adapted-block"><strong>Adapted (${esc(d.detected_jurisdiction||'local')}):</strong><br>${esc(a.adapted_language)}</div>
+            <div style="margin-top:.3rem;font-size:.78rem;color:var(--muted);">Basis: ${esc(a.regulatory_basis||'—')}</div>
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    if (disclosures.length) {
+      html += `<div class="res-label" style="margin-top:1rem;">Required disclosures</div>
+        <ul style="padding-left:1.2rem;font-size:.835rem;color:var(--muted);">${disclosures.map(r=>`<li>${esc(r)}</li>`).join('')}</ul>`;
+    }
+    if (flags.length) {
+      html += `<div class="res-label" style="margin-top:1rem;">Regulatory flags</div>
+        <ul style="padding-left:1.2rem;font-size:.835rem;color:#b45309;">${flags.map(f=>`<li>${esc(f)}</li>`).join('')}</ul>`;
+    }
+    bodyEl.innerHTML = html;
+  }
+
+  else if (name === 'orchestrator') {
+    const updates = d.updates_needed || [];
+    if (!updates.length) { bodyEl.innerHTML = '<p style="color:var(--muted);margin-top:.75rem;font-size:.875rem;">✓ No proactive updates needed.</p>'; return; }
+    const urgOrd = {high:0,medium:1,low:2};
+    updates.sort((a,b) => (urgOrd[a.email_draft?.urgency]||1) - (urgOrd[b.email_draft?.urgency]||1));
+    bodyEl.innerHTML = `<div class="res-label">Update drafts (${updates.length} LP${updates.length>1?'s':''})</div>
+      <div class="res-grid">${updates.map(u => {
+        const em = u.email_draft || {};
+        return `<div class="res-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem;">
+            <div class="res-card-title">${esc(u.investor)} <span style="font-weight:400;color:var(--muted);">(${u.stale_answer_count} stale answers)</span></div>
+            ${sevPill(em.urgency||'medium')}
+          </div>
+          <div class="email-draft">
+            <div class="email-subject">Subject: ${esc(em.subject||'')}</div>
+            <div class="email-body">${esc(em.body||'')}</div>
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+  }
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endblock %}

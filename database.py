@@ -473,6 +473,49 @@ def init_db():
             )
         """)
 
+        # Fund watchlist — funds queued for Risk Assessment Agent research
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fund_watchlist (
+                id                 SERIAL PRIMARY KEY,
+                fund_name          TEXT NOT NULL,
+                ticker             TEXT DEFAULT '',
+                category           TEXT DEFAULT 'Equity',
+                notes              TEXT DEFAULT '',
+                added_by           INTEGER REFERENCES users(id),
+                added_at           TIMESTAMP DEFAULT NOW(),
+                last_researched_at TIMESTAMP,
+                deleted_at         TIMESTAMP DEFAULT NULL
+            )
+        """)
+
+        # Fund research reports — one per fund (upserted on each run)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fund_research_reports (
+                id           SERIAL PRIMARY KEY,
+                fund_id      INTEGER NOT NULL UNIQUE,
+                report_json  TEXT NOT NULL DEFAULT '{}',
+                generated_at TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (fund_id) REFERENCES fund_watchlist(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Plugin results — stores output from each plugin run
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS plugin_results (
+                id                  SERIAL PRIMARY KEY,
+                plugin_name         TEXT NOT NULL,
+                investor_session_id INTEGER,
+                result_json         TEXT NOT NULL DEFAULT '{}',
+                created_at          TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (investor_session_id) REFERENCES investor_sessions(id) ON DELETE CASCADE
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_plugin_results_name ON plugin_results(plugin_name)")
+        # Migration: add deleted_at to fund_watchlist if not exists
+        cur.execute("""
+            ALTER TABLE fund_watchlist ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP DEFAULT NULL
+        """)
+
         # Seed marketplace agents
         _seed_marketplace_agents(cur)
 

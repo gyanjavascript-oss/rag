@@ -148,6 +148,14 @@ def admin_index():
     return redirect(url_for("login"))
 
 
+@app.errorhandler(403)
+def forbidden(e):
+    # API requests get JSON, browser requests get redirected to login
+    if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html:
+        return jsonify({"error": "Forbidden"}), 403
+    return redirect(url_for("login"))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -1827,5 +1835,257 @@ def investor_agent_chat(agent_id, conv_id=None):
                            conv_id=conv_id, messages=messages)
 
 
+# ── Plugins ───────────────────────────────────────────────────────────────────
+
+import plugins as plg
+import fund_research as fr
+
+
+@app.route("/plugins")
+@login_required
+def plugins_dashboard():
+    investor_sessions = db.list_investor_sessions()
+    return render_template(
+        "plugins.html",
+        user=_current_user(),
+        investor_sessions=investor_sessions,
+        fund_name=os.getenv("FUND_NAME", "DDQ Platform"),
+        active_tab=request.args.get("tab", "consistency"),
+    )
+
+
+def _plugin_route(fn, *args, **kwargs):
+    """Wrap any plugin call so exceptions always return JSON, never HTML."""
+    try:
+        return jsonify(fn(*args, **kwargs))
+    except Exception as e:
+        import traceback
+        app.logger.error("Plugin error: %s\n%s", e, traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+# Plugin 1 — Consistency Audit
+@app.route("/api/plugins/consistency-audit", methods=["POST"])
+@login_required
+def api_plugin_consistency_audit():
+    body = request.get_json(silent=True) or {}
+    session_id = body.get("session_id") or (request.form.get("session_id"))
+    if not session_id:
+        return jsonify({"error": "session_id required"}), 400
+    return _plugin_route(plg.run_consistency_audit, int(session_id))
+
+
+# Plugin 2 — Gap Report
+@app.route("/api/plugins/gap-report", methods=["POST"])
+@login_required
+def api_plugin_gap_report():
+    return _plugin_route(plg.run_gap_report)
+
+
+# Plugin 3 — Investor Memory
+@app.route("/api/plugins/investor-memory", methods=["POST"])
+@login_required
+def api_plugin_investor_memory():
+    body = request.get_json(silent=True) or {}
+    session_id = body.get("session_id") or request.form.get("session_id")
+    if not session_id:
+        return jsonify({"error": "session_id required"}), 400
+    return _plugin_route(plg.build_investor_memory, int(session_id))
+
+
+# Plugin 4 — Staleness Monitor
+@app.route("/api/plugins/staleness", methods=["POST"])
+@login_required
+def api_plugin_staleness():
+    return _plugin_route(plg.run_staleness_monitor)
+
+
+# Plugin 5 — EDGAR Sync
+@app.route("/api/plugins/edgar-sync", methods=["POST"])
+@login_required
+def api_plugin_edgar_sync():
+    body = request.get_json(silent=True) or {}
+    return _plugin_route(plg.run_edgar_sync, body.get("fund_name", "").strip())
+
+
+# Plugin 6 — ESG Auto-Population
+@app.route("/api/plugins/esg-autopop", methods=["POST"])
+@login_required
+def api_plugin_esg_autopop():
+    return _plugin_route(plg.run_esg_autopop)
+
+
+# Plugin 7 — Jurisdiction Mapping
+@app.route("/api/plugins/jurisdiction", methods=["POST"])
+@login_required
+def api_plugin_jurisdiction():
+    body = request.get_json(silent=True) or {}
+    session_id = body.get("session_id") or request.form.get("session_id")
+    if not session_id:
+        return jsonify({"error": "session_id required"}), 400
+    return _plugin_route(plg.run_jurisdiction_mapping, int(session_id))
+
+
+# Plugin 8 — Staleness Orchestrator
+@app.route("/api/plugins/staleness-orchestrator", methods=["POST"])
+@login_required
+def api_plugin_staleness_orchestrator():
+    return _plugin_route(plg.run_staleness_orchestrator)
+
+
+# ── Fund Research (Risk Assessment Agent) ─────────────────────────────────────
+
+@app.route("/fund-research")
+@login_required
+def fund_research():
+    conn = db.get_db()
+    rows = conn.execute(
+        "SELECT w.*, r.generated_at AS report_at, r.report_json FROM fund_watchlist w "
+        "LEFT JOIN fund_research_reports r ON r.fund_id = w.id "
+        "WHERE w.deleted_at IS NULL "
+        "ORDER BY w.added_at DESC"
+    ).fetchall()
+    db.put_db(conn)
+
+    import json as _json
+    funds = []
+    for row in rows:
+        f = dict(row)
+        rj = {}
+        try:
+            rj = _json.loads(f.get("report_json") or "{}") or {}
+        except Exception:
+            pass
+        ra = rj.get("risk_assessment", {}) or {}
+        geo = rj.get("geopolitical_risks", {}) or {}
+        av = rj.get("analyst_verdict", {}) or {}
+        f["risk_rating"] = ra.get("overall_risk_rating", "")
+        f["geo_risk"] = geo.get("overall_geo_risk", "")
+        f["conviction"] = av.get("conviction_rating", "")
+        funds.append(f)
+
+    return render_template("fund_research.html",
+                           user=_current_user(),
+                           funds=funds,
+                           fund_name=os.getenv("FUND_NAME", "DDQ Platform"))
+
+
+@app.route("/fund-research/add", methods=["POST"])
+@login_required
+def fund_research_add():
+    name = request.form.get("fund_name", "").strip()
+    ticker = request.form.get("ticker", "").strip().upper()
+    category = request.form.get("category", "Equity").strip()
+    notes = request.form.get("notes", "").strip()
+    if not name:
+        flash("Fund name is required.", "error")
+        return redirect(url_for("fund_research"))
+    conn = db.get_db()
+    conn.execute(
+        "INSERT INTO fund_watchlist (fund_name, ticker, category, notes, added_by) VALUES (?,?,?,?,?)",
+        (name, ticker, category, notes, _current_user()["id"]),
+    )
+    conn.commit()
+    db.put_db(conn)
+    flash(f'"{name}" added to watchlist.', "success")
+    return redirect(url_for("fund_research"))
+
+
+@app.route("/fund-research/<int:fund_id>/delete", methods=["POST"])
+@login_required
+def fund_research_delete(fund_id):
+    conn = db.get_db()
+    conn.execute("UPDATE fund_watchlist SET deleted_at=NOW() WHERE id=?", (fund_id,))
+    conn.commit()
+    db.put_db(conn)
+    flash("Fund removed.", "success")
+    return redirect(url_for("fund_research"))
+
+
+@app.route("/fund-research/<int:fund_id>/edit", methods=["POST"])
+@login_required
+def fund_research_edit(fund_id):
+    name = request.form.get("fund_name", "").strip()
+    ticker = request.form.get("ticker", "").strip().upper()
+    category = request.form.get("category", "Equity").strip()
+    notes = request.form.get("notes", "").strip()
+    if not name:
+        flash("Fund name is required.", "error")
+        return redirect(url_for("fund_research"))
+    conn = db.get_db()
+    conn.execute(
+        "UPDATE fund_watchlist SET fund_name=?, ticker=?, category=?, notes=? WHERE id=? AND deleted_at IS NULL",
+        (name, ticker, category, notes, fund_id),
+    )
+    conn.commit()
+    db.put_db(conn)
+    flash(f'"{name}" updated.', "success")
+    return redirect(url_for("fund_research"))
+
+
+@app.route("/fund-research/<int:fund_id>/report")
+@login_required
+def fund_research_report(fund_id):
+    conn = db.get_db()
+    fund = conn.execute("SELECT * FROM fund_watchlist WHERE id=? AND deleted_at IS NULL", (fund_id,)).fetchone()
+    db.put_db(conn)
+    if not fund:
+        flash("Fund not found.", "error")
+        return redirect(url_for("fund_research"))
+    report = fr.get_latest_report(fund_id)
+    return render_template("fund_research_report.html",
+                           user=_current_user(),
+                           fund=dict(fund),
+                           report=report,
+                           fund_name=os.getenv("FUND_NAME", "DDQ Platform"))
+
+
+import threading as _threading
+
+# In-memory job store: job_id -> {"status": "running"|"done"|"error", "error": str}
+_fr_jobs = {}
+
+@app.route("/api/fund-research/<int:fund_id>/generate", methods=["POST"])
+@login_required
+def api_fund_research_generate(fund_id):
+    import uuid
+    job_id = str(uuid.uuid4())
+    _fr_jobs[job_id] = {"status": "running", "thoughts": []}
+
+    def _log(phase, text):
+        entry = {"phase": phase, "text": text, "ts": __import__("time").time()}
+        _fr_jobs[job_id]["thoughts"].append(entry)
+
+    def _run():
+        try:
+            fr.generate_report(fund_id, log=_log)
+            _fr_jobs[job_id]["status"] = "done"
+        except Exception as e:
+            import traceback
+            app.logger.error("Fund research error: %s\n%s", e, traceback.format_exc())
+            _fr_jobs[job_id]["status"] = "error"
+            _fr_jobs[job_id]["error"] = str(e)
+
+    t = _threading.Thread(target=_run, daemon=True)
+    t.start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/fund-research/job/<job_id>", methods=["GET"])
+@login_required
+def api_fund_research_job(job_id):
+    job = _fr_jobs.get(job_id)
+    if not job:
+        return jsonify({"status": "unknown"})
+    offset = request.args.get("offset", 0, type=int)
+    thoughts = job.get("thoughts", [])
+    return jsonify({
+        "status": job["status"],
+        "error": job.get("error"),
+        "thoughts": thoughts[offset:],
+        "total": len(thoughts),
+    })
+
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, threaded=True)

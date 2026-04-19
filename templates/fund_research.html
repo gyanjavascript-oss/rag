@@ -1,0 +1,507 @@
+{% extends "base.html" %}
+{% block title %}Fund Research{% endblock %}
+{% block head %}
+<style>
+.fr-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:1.25rem; margin-top:1.5rem; }
+.fr-card {
+  background:var(--white); border:1px solid var(--border);
+  border-radius:var(--radius); box-shadow:var(--shadow);
+  padding:1.25rem; display:flex; flex-direction:column; gap:.75rem;
+}
+.fr-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:.75rem; }
+.fr-name { font-size:1rem; font-weight:700; color:var(--navy); }
+.fr-ticker {
+  font-size:.78rem; font-weight:700; padding:.2rem .6rem;
+  border-radius:4px; background:#eff6ff; color:var(--accent);
+  border:1px solid #bfdbfe; white-space:nowrap;
+}
+.fr-cat {
+  font-size:.72rem; font-weight:600; padding:.15rem .55rem;
+  border-radius:999px; background:var(--bg2); color:var(--muted);
+  border:1px solid var(--border); text-transform:uppercase; letter-spacing:.04em;
+}
+.fr-notes { font-size:.835rem; color:var(--muted); }
+.fr-meta { font-size:.78rem; color:var(--muted); }
+.fr-actions { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+.fr-report-badge {
+  font-size:.72rem; padding:.2rem .6rem; border-radius:4px;
+  background:#d1fae5; color:#065f46; font-weight:600;
+}
+.cat-opts { display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.35rem; }
+.cat-opt input { display:none; }
+.cat-opt label {
+  padding:.3rem .75rem; border-radius:999px; font-size:.8rem; font-weight:500;
+  border:1px solid var(--border); background:var(--white); color:var(--muted);
+  cursor:pointer; transition:all .15s;
+}
+.cat-opt input:checked + label { background:var(--navy); color:var(--white); border-color:var(--navy); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">⚠️ Fund Research</h1>
+    <p class="page-sub">Risk Assessment Agent — add funds to research. The agent searches the web and generates a detailed 5-year performance prediction report.</p>
+  </div>
+  <button class="btn-primary" onclick="document.getElementById('addModal').style.display='flex'">+ Add Fund</button>
+</div>
+
+{% if not funds %}
+<div class="empty-card">
+  <div class="empty-icon">📈</div>
+  <h3>No funds in watchlist yet</h3>
+  <p>Add a fund by name or ticker to start a research run. The agent will search the web for performance history, strategy, risk factors, and generate a 5-year outlook.</p>
+  <button class="btn-primary" onclick="document.getElementById('addModal').style.display='flex'">Add First Fund</button>
+</div>
+{% else %}
+<div class="fr-grid">
+  {% for f in funds %}
+  {% set risk_rating = f.risk_rating or '' %}
+  {% set geo_risk = f.geo_risk or '' %}
+  {% set conviction = f.conviction or '' %}
+
+  <div class="fr-card">
+    <div class="fr-card-head">
+      <div style="flex:1;min-width:0;">
+        <div class="fr-name">{{ f.fund_name }}</div>
+        <div style="display:flex;gap:.4rem;margin-top:.35rem;flex-wrap:wrap;align-items:center;">
+          {% if f.ticker %}<span class="fr-ticker">{{ f.ticker }}</span>{% endif %}
+          <span class="fr-cat">{{ f.category }}</span>
+          {% if f.report_at %}<span class="fr-report-badge">✓ Report ready</span>{% endif %}
+        </div>
+      </div>
+      <!-- Edit button -->
+      <button class="btn-outline btn-sm" style="flex-shrink:0;"
+        onclick="openEdit({{ f.id }}, {{ f.fund_name|tojson }}, {{ (f.ticker or '')|tojson }}, {{ f.category|tojson }}, {{ (f.notes or '')|tojson }})">
+        ✎ Edit
+      </button>
+    </div>
+
+    <!-- Risk cards row -->
+    {% if risk_rating or geo_risk or conviction %}
+    <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.1rem;">
+      {% if risk_rating %}
+      <div style="flex:1;min-width:80px;padding:.5rem .65rem;border-radius:6px;text-align:center;
+        {% if 'High' in risk_rating or 'Critical' in risk_rating %}background:#fee2e2;border:1px solid #fca5a5;
+        {% elif 'Medium' in risk_rating or 'Moderate' in risk_rating %}background:#fef3c7;border:1px solid #fde68a;
+        {% else %}background:#d1fae5;border:1px solid #6ee7b7;{% endif %}">
+        <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;opacity:.7;
+          {% if 'High' in risk_rating %}color:#991b1b;{% elif 'Medium' in risk_rating %}color:#92400e;{% else %}color:#065f46;{% endif %}">Fund Risk</div>
+        <div style="font-size:.82rem;font-weight:800;margin-top:.1rem;
+          {% if 'High' in risk_rating %}color:#991b1b;{% elif 'Medium' in risk_rating %}color:#92400e;{% else %}color:#065f46;{% endif %}">
+          {{ risk_rating }}</div>
+      </div>
+      {% endif %}
+      {% if geo_risk %}
+      <div style="flex:1;min-width:80px;padding:.5rem .65rem;border-radius:6px;text-align:center;
+        {% if geo_risk in ['High','Critical'] %}background:#fce7f3;border:1px solid #f9a8d4;
+        {% elif geo_risk == 'Moderate' %}background:#fef3c7;border:1px solid #fde68a;
+        {% else %}background:#eff6ff;border:1px solid #93c5fd;{% endif %}">
+        <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;opacity:.7;
+          {% if geo_risk in ['High','Critical'] %}color:#9d174d;{% elif geo_risk == 'Moderate' %}color:#92400e;{% else %}color:#1d4ed8;{% endif %}">Geo Risk</div>
+        <div style="font-size:.82rem;font-weight:800;margin-top:.1rem;
+          {% if geo_risk in ['High','Critical'] %}color:#9d174d;{% elif geo_risk == 'Moderate' %}color:#92400e;{% else %}color:#1d4ed8;{% endif %}">
+          {{ geo_risk }}</div>
+      </div>
+      {% endif %}
+      {% if conviction %}
+      <div style="flex:1;min-width:80px;padding:.5rem .65rem;border-radius:6px;text-align:center;
+        {% if conviction == 'Strong Buy' %}background:#d1fae5;border:1px solid #6ee7b7;
+        {% elif conviction == 'Buy' %}background:#eff6ff;border:1px solid #93c5fd;
+        {% elif conviction == 'Hold' %}background:#fef3c7;border:1px solid #fde68a;
+        {% else %}background:#fee2e2;border:1px solid #fca5a5;{% endif %}">
+        <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;opacity:.7;
+          {% if conviction in ['Strong Buy','Buy'] %}color:#065f46;{% elif conviction == 'Hold' %}color:#92400e;{% else %}color:#991b1b;{% endif %}">Verdict</div>
+        <div style="font-size:.78rem;font-weight:800;margin-top:.1rem;
+          {% if conviction in ['Strong Buy','Buy'] %}color:#065f46;{% elif conviction == 'Hold' %}color:#92400e;{% else %}color:#991b1b;{% endif %}">
+          {{ conviction }}</div>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if f.notes %}
+    <div class="fr-notes">{{ f.notes }}</div>
+    {% endif %}
+    <div class="fr-meta">
+      Added {{ f.added_at[:10] if f.added_at else '—' }}
+      {% if f.last_researched_at %} · Last researched {{ f.last_researched_at[:10] }}{% endif %}
+    </div>
+    <div class="fr-actions">
+      <a href="{{ url_for('fund_research_report', fund_id=f.id) }}" class="btn-primary btn-sm">
+        {% if f.report_at %}View Report{% else %}Run Research{% endif %}
+      </a>
+      <form method="POST" action="{{ url_for('fund_research_delete', fund_id=f.id) }}" style="display:inline;"
+        onsubmit="return confirm('Remove {{ f.fund_name }}? It can be restored by an admin.')">
+        <button type="submit" class="btn-danger-sm">Remove</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Add Fund Modal -->
+<div id="addModal" class="modal-overlay" style="display:none;">
+  <div class="modal" style="width:600px;max-height:90vh;overflow-y:auto;">
+    <div class="modal-header">
+      <h3>Add Fund to Watchlist</h3>
+      <button class="modal-close" onclick="document.getElementById('addModal').style.display='none'">✕</button>
+    </div>
+    <form method="POST" action="{{ url_for('fund_research_add') }}" id="addFundForm">
+
+      <!-- Quick-pick popular funds -->
+      <div class="field-group">
+        <label>Quick Pick <span style="font-weight:400;color:var(--muted);font-size:.78rem;">— select to auto-fill</span></label>
+        <div style="position:relative;">
+          <input id="fundSearch" type="text" placeholder="Search funds by name or ticker…" autocomplete="off"
+            style="width:100%;" oninput="filterFunds(this.value)" onfocus="filterFunds(this.value)">
+          <div id="fundDropdown" style="
+            display:none; position:absolute; top:100%; left:0; right:0; z-index:999;
+            background:var(--white); border:1px solid var(--border); border-radius:var(--radius);
+            box-shadow:var(--shadow); max-height:220px; overflow-y:auto;">
+          </div>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);margin:.25rem 0 1rem;"></div>
+
+      <div class="field-group">
+        <label>Fund Name <span class="required">*</span></label>
+        <input id="inp_fund_name" name="fund_name" type="text" placeholder="e.g. Vanguard S&P 500 ETF" required>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
+        <div class="field-group">
+          <label>Ticker Symbol</label>
+          <input id="inp_ticker" name="ticker" type="text" placeholder="e.g. VOO" style="text-transform:uppercase;">
+        </div>
+        <div class="field-group">
+          <label>Exchange</label>
+          <input id="inp_exchange" name="exchange" type="text" placeholder="e.g. NYSE, NASDAQ" readonly
+            style="background:var(--bg2);color:var(--muted);">
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Category</label>
+        <div class="cat-opts" id="catOpts">
+          {% for cat in ['Equity','Fixed Income','ETF','Hedge Fund','Private Equity','Real Estate','Multi-Asset','Commodity','Crypto','Other'] %}
+          <div class="cat-opt">
+            <input type="radio" name="category" id="cat_{{ loop.index }}" value="{{ cat }}" {% if cat == 'Equity' %}checked{% endif %}>
+            <label for="cat_{{ loop.index }}">{{ cat }}</label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Notes</label>
+        <textarea name="notes" rows="2" placeholder="Why are you researching this fund? Any specific questions?"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-outline" onclick="document.getElementById('addModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Add Fund</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+const FUNDS = [
+  // ── US Equity ETFs ──────────────────────────────────────────────
+  {name:"Vanguard S&P 500 ETF",            ticker:"VOO",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"SPDR S&P 500 ETF Trust",          ticker:"SPY",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares Core S&P 500 ETF",        ticker:"IVV",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Invesco QQQ Trust",               ticker:"QQQ",  cat:"ETF",          exchange:"NASDAQ"},
+  {name:"Vanguard Total Stock Market ETF", ticker:"VTI",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares Russell 2000 ETF",        ticker:"IWM",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Schwab U.S. Broad Market ETF",    ticker:"SCHB", cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Vanguard Growth ETF",             ticker:"VUG",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Vanguard Value ETF",              ticker:"VTV",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares S&P 500 Value ETF",       ticker:"IVE",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"SPDR Dow Jones Industrial ETF",   ticker:"DIA",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Vanguard Dividend Appreciation",  ticker:"VIG",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Schwab U.S. Dividend Equity ETF", ticker:"SCHD", cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares Core Dividend Growth",    ticker:"DGRO", cat:"ETF",          exchange:"NYSE Arca"},
+
+  // ── International Equity ETFs ───────────────────────────────────
+  {name:"Vanguard FTSE Developed Markets", ticker:"VEA",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares MSCI EAFE ETF",           ticker:"EFA",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Vanguard FTSE Emerging Markets",  ticker:"VWO",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares MSCI Emerging Markets",   ticker:"EEM",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares MSCI World ETF",          ticker:"URTH", cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Vanguard Total World Stock ETF",  ticker:"VT",   cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares China Large-Cap ETF",     ticker:"FXI",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"iShares MSCI India ETF",          ticker:"INDA", cat:"ETF",          exchange:"NYSE Arca"},
+
+  // ── Sector ETFs ─────────────────────────────────────────────────
+  {name:"Technology Select Sector SPDR",   ticker:"XLK",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Financial Select Sector SPDR",    ticker:"XLF",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Health Care Select Sector SPDR",  ticker:"XLV",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Energy Select Sector SPDR",       ticker:"XLE",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Consumer Discretionary SPDR",     ticker:"XLY",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Industrials Select Sector SPDR",  ticker:"XLI",  cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"ARK Innovation ETF",              ticker:"ARKK", cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"ARK Genomic Revolution ETF",      ticker:"ARKG", cat:"ETF",          exchange:"NYSE Arca"},
+  {name:"Global X Semiconductors ETF",     ticker:"SOXX", cat:"ETF",          exchange:"NASDAQ"},
+  {name:"VanEck Semiconductor ETF",        ticker:"SMH",  cat:"ETF",          exchange:"NASDAQ"},
+
+  // ── Fixed Income ETFs ───────────────────────────────────────────
+  {name:"iShares Core US Aggregate Bond",  ticker:"AGG",  cat:"Fixed Income", exchange:"NYSE Arca"},
+  {name:"Vanguard Total Bond Market ETF",  ticker:"BND",  cat:"Fixed Income", exchange:"NYSE Arca"},
+  {name:"iShares 20+ Year Treasury Bond",  ticker:"TLT",  cat:"Fixed Income", exchange:"NASDAQ"},
+  {name:"iShares 7-10 Year Treasury Bond", ticker:"IEF",  cat:"Fixed Income", exchange:"NASDAQ"},
+  {name:"Vanguard Short-Term Bond ETF",    ticker:"BSV",  cat:"Fixed Income", exchange:"NYSE Arca"},
+  {name:"iShares TIPS Bond ETF",           ticker:"TIP",  cat:"Fixed Income", exchange:"NYSE Arca"},
+  {name:"iShares iBoxx High Yield Bond",   ticker:"HYG",  cat:"Fixed Income", exchange:"NYSE Arca"},
+  {name:"SPDR Bloomberg High Yield Bond",  ticker:"JNK",  cat:"Fixed Income", exchange:"NYSE Arca"},
+  {name:"iShares Investment Grade Corp",   ticker:"LQD",  cat:"Fixed Income", exchange:"NYSE Arca"},
+
+  // ── Real Estate ETFs ────────────────────────────────────────────
+  {name:"Vanguard Real Estate ETF",        ticker:"VNQ",  cat:"Real Estate",  exchange:"NYSE Arca"},
+  {name:"iShares US Real Estate ETF",      ticker:"IYR",  cat:"Real Estate",  exchange:"NYSE Arca"},
+  {name:"Schwab US REIT ETF",              ticker:"SCHH", cat:"Real Estate",  exchange:"NYSE Arca"},
+
+  // ── Commodity ETFs ──────────────────────────────────────────────
+  {name:"SPDR Gold Shares",                ticker:"GLD",  cat:"Commodity",    exchange:"NYSE Arca"},
+  {name:"iShares Gold Trust",              ticker:"IAU",  cat:"Commodity",    exchange:"NYSE Arca"},
+  {name:"iShares Silver Trust",            ticker:"SLV",  cat:"Commodity",    exchange:"NYSE Arca"},
+  {name:"Invesco DB Commodity Index",      ticker:"DBC",  cat:"Commodity",    exchange:"NYSE Arca"},
+  {name:"United States Oil Fund",          ticker:"USO",  cat:"Commodity",    exchange:"NYSE Arca"},
+
+  // ── Crypto ETFs ─────────────────────────────────────────────────
+  {name:"iShares Bitcoin Trust",           ticker:"IBIT", cat:"Crypto",       exchange:"NASDAQ"},
+  {name:"Fidelity Wise Origin Bitcoin",    ticker:"FBTC", cat:"Crypto",       exchange:"NYSE Arca"},
+  {name:"ProShares Bitcoin Strategy ETF",  ticker:"BITO", cat:"Crypto",       exchange:"NYSE Arca"},
+  {name:"Grayscale Bitcoin Trust",         ticker:"GBTC", cat:"Crypto",       exchange:"NYSE Arca"},
+
+  // ── Multi-Asset / Balanced ──────────────────────────────────────
+  {name:"iShares Core Growth Allocation",  ticker:"AOR",  cat:"Multi-Asset",  exchange:"NYSE Arca"},
+  {name:"iShares Core Conservative Alloc", ticker:"AOK",  cat:"Multi-Asset",  exchange:"NYSE Arca"},
+  {name:"Vanguard LifeStrategy Moderate",  ticker:"VSMGX",cat:"Multi-Asset",  exchange:"NASDAQ"},
+  {name:"Vanguard Balanced Index Fund",    ticker:"VBIAX",cat:"Multi-Asset",  exchange:"NASDAQ"},
+
+  // ── Actively Managed / Mutual Funds ─────────────────────────────
+  {name:"Fidelity Contrafund",             ticker:"FCNTX",cat:"Equity",       exchange:"NASDAQ"},
+  {name:"American Funds Growth Fund",      ticker:"AGTHX",cat:"Equity",       exchange:"NASDAQ"},
+  {name:"T. Rowe Price Blue Chip Growth",  ticker:"TRBCX",cat:"Equity",       exchange:"NASDAQ"},
+  {name:"Dodge & Cox Stock Fund",          ticker:"DODGX",cat:"Equity",       exchange:"NASDAQ"},
+  {name:"Vanguard Wellington Fund",        ticker:"VWELX",cat:"Multi-Asset",  exchange:"NASDAQ"},
+  {name:"PIMCO Total Return Fund",         ticker:"PTTRX",cat:"Fixed Income", exchange:"NASDAQ"},
+  {name:"Fidelity Total Market Index",     ticker:"FSKAX",cat:"Equity",       exchange:"NASDAQ"},
+
+  // ── Hedge Fund Strategies (ETF proxies) ─────────────────────────
+  {name:"IQ Merger Arbitrage ETF",         ticker:"MNA",  cat:"Hedge Fund",   exchange:"NYSE Arca"},
+  {name:"ProShares Hedge Replication ETF", ticker:"HDG",  cat:"Hedge Fund",   exchange:"NYSE Arca"},
+  {name:"AGFiQ US Market Neutral Anti-Beta",ticker:"BTAL",cat:"Hedge Fund",   exchange:"NYSE Arca"},
+
+  // ── Leveraged / Inverse ──────────────────────────────────────────
+  {name:"ProShares UltraPro QQQ",          ticker:"TQQQ", cat:"ETF",          exchange:"NASDAQ",    country:"USA"},
+  {name:"ProShares Ultra S&P500",          ticker:"SSO",  cat:"ETF",          exchange:"NYSE Arca", country:"USA"},
+  {name:"ProShares Short S&P500",          ticker:"SH",   cat:"ETF",          exchange:"NYSE Arca", country:"USA"},
+  {name:"Direxion Daily S&P 500 Bull 3x",  ticker:"SPXL", cat:"ETF",          exchange:"NYSE Arca", country:"USA"},
+
+  // ══ COUNTRY / REGION ETFs ════════════════════════════════════════
+
+  // ── United Kingdom ───────────────────────────────────────────────
+  {name:"iShares MSCI United Kingdom ETF", ticker:"EWU",  cat:"Equity",       exchange:"NYSE Arca", country:"UK"},
+  {name:"Franklin FTSE United Kingdom",    ticker:"FLGB", cat:"ETF",          exchange:"NYSE Arca", country:"UK"},
+  {name:"Vanguard FTSE All-World ex-US",   ticker:"VEU",  cat:"ETF",          exchange:"NYSE Arca", country:"Global ex-US"},
+
+  // ── Germany ──────────────────────────────────────────────────────
+  {name:"iShares MSCI Germany ETF",        ticker:"EWG",  cat:"Equity",       exchange:"NYSE Arca", country:"Germany"},
+  {name:"Franklin FTSE Germany ETF",       ticker:"FLGR", cat:"ETF",          exchange:"NYSE Arca", country:"Germany"},
+
+  // ── France ───────────────────────────────────────────────────────
+  {name:"iShares MSCI France ETF",         ticker:"EWQ",  cat:"Equity",       exchange:"NYSE Arca", country:"France"},
+  {name:"Franklin FTSE France ETF",        ticker:"FLGB", cat:"ETF",          exchange:"NYSE Arca", country:"France"},
+
+  // ── Japan ────────────────────────────────────────────────────────
+  {name:"iShares MSCI Japan ETF",          ticker:"EWJ",  cat:"Equity",       exchange:"NYSE Arca", country:"Japan"},
+  {name:"WisdomTree Japan Hedged Equity",  ticker:"DXJ",  cat:"ETF",          exchange:"NYSE Arca", country:"Japan"},
+  {name:"Franklin FTSE Japan ETF",         ticker:"FLJP", cat:"ETF",          exchange:"NYSE Arca", country:"Japan"},
+  {name:"Xtrackers Japan JPX-Nikkei 400",  ticker:"JPN",  cat:"ETF",          exchange:"NYSE Arca", country:"Japan"},
+
+  // ── China ────────────────────────────────────────────────────────
+  {name:"iShares China Large-Cap ETF",     ticker:"FXI",  cat:"Equity",       exchange:"NYSE Arca", country:"China"},
+  {name:"iShares MSCI China ETF",          ticker:"MCHI", cat:"Equity",       exchange:"NASDAQ",    country:"China"},
+  {name:"KraneShares CSI China Internet",  ticker:"KWEB", cat:"ETF",          exchange:"NYSE Arca", country:"China"},
+  {name:"Xtrackers Harvest CSI 300 ETF",  ticker:"ASHR", cat:"ETF",          exchange:"NYSE Arca", country:"China"},
+  {name:"iShares MSCI China Small-Cap",    ticker:"ECNS", cat:"Equity",       exchange:"NYSE Arca", country:"China"},
+
+  // ── India ────────────────────────────────────────────────────────
+  {name:"iShares MSCI India ETF",          ticker:"INDA", cat:"Equity",       exchange:"NYSE Arca", country:"India"},
+  {name:"WisdomTree India Earnings ETF",   ticker:"EPI",  cat:"ETF",          exchange:"NYSE Arca", country:"India"},
+  {name:"Columbia India Consumer ETF",     ticker:"INCO", cat:"ETF",          exchange:"NYSE Arca", country:"India"},
+  {name:"iShares India 50 ETF",            ticker:"INDY", cat:"Equity",       exchange:"NASDAQ",    country:"India"},
+
+  // ── South Korea ──────────────────────────────────────────────────
+  {name:"iShares MSCI South Korea ETF",    ticker:"EWY",  cat:"Equity",       exchange:"NYSE Arca", country:"South Korea"},
+  {name:"Franklin FTSE South Korea ETF",   ticker:"FLKR", cat:"ETF",          exchange:"NYSE Arca", country:"South Korea"},
+
+  // ── Taiwan ───────────────────────────────────────────────────────
+  {name:"iShares MSCI Taiwan ETF",         ticker:"EWT",  cat:"Equity",       exchange:"NYSE Arca", country:"Taiwan"},
+  {name:"Franklin FTSE Taiwan ETF",        ticker:"FLTW", cat:"ETF",          exchange:"NYSE Arca", country:"Taiwan"},
+
+  // ── Australia ────────────────────────────────────────────────────
+  {name:"iShares MSCI Australia ETF",      ticker:"EWA",  cat:"Equity",       exchange:"NYSE Arca", country:"Australia"},
+  {name:"Franklin FTSE Australia ETF",     ticker:"FLAU", cat:"ETF",          exchange:"NYSE Arca", country:"Australia"},
+
+  // ── Canada ───────────────────────────────────────────────────────
+  {name:"iShares MSCI Canada ETF",         ticker:"EWC",  cat:"Equity",       exchange:"NYSE Arca", country:"Canada"},
+  {name:"Franklin FTSE Canada ETF",        ticker:"FLCA", cat:"ETF",          exchange:"NYSE Arca", country:"Canada"},
+
+  // ── Brazil ───────────────────────────────────────────────────────
+  {name:"iShares MSCI Brazil ETF",         ticker:"EWZ",  cat:"Equity",       exchange:"NYSE Arca", country:"Brazil"},
+  {name:"VanEck Brazil Small-Cap ETF",     ticker:"BRF",  cat:"ETF",          exchange:"NYSE Arca", country:"Brazil"},
+
+  // ── Mexico ───────────────────────────────────────────────────────
+  {name:"iShares MSCI Mexico ETF",         ticker:"EWW",  cat:"Equity",       exchange:"NYSE Arca", country:"Mexico"},
+
+  // ── Russia / Eastern Europe ──────────────────────────────────────
+  {name:"iShares MSCI Poland ETF",         ticker:"EPOL", cat:"Equity",       exchange:"NYSE Arca", country:"Poland"},
+  {name:"VanEck Russia ETF (suspended)",   ticker:"RSX",  cat:"Equity",       exchange:"NYSE Arca", country:"Russia"},
+
+  // ── Saudi Arabia / Middle East ───────────────────────────────────
+  {name:"iShares MSCI Saudi Arabia ETF",   ticker:"KSA",  cat:"Equity",       exchange:"NYSE Arca", country:"Saudi Arabia"},
+  {name:"iShares MSCI UAE ETF",            ticker:"UAE",  cat:"Equity",       exchange:"NYSE Arca", country:"UAE"},
+  {name:"iShares MSCI Qatar ETF",          ticker:"QAT",  cat:"Equity",       exchange:"NYSE Arca", country:"Qatar"},
+  {name:"VanEck Gulf States ETF",          ticker:"MES",  cat:"ETF",          exchange:"NYSE Arca", country:"Gulf States"},
+  {name:"iShares MSCI Israel ETF",         ticker:"EIS",  cat:"Equity",       exchange:"NYSE Arca", country:"Israel"},
+
+  // ── Africa ───────────────────────────────────────────────────────
+  {name:"VanEck Africa ETF",               ticker:"AFK",  cat:"ETF",          exchange:"NYSE Arca", country:"Africa"},
+  {name:"iShares MSCI South Africa ETF",   ticker:"EZA",  cat:"Equity",       exchange:"NYSE Arca", country:"South Africa"},
+
+  // ── Singapore / SE Asia ──────────────────────────────────────────
+  {name:"iShares MSCI Singapore ETF",      ticker:"EWS",  cat:"Equity",       exchange:"NYSE Arca", country:"Singapore"},
+  {name:"iShares MSCI Thailand ETF",       ticker:"THD",  cat:"Equity",       exchange:"NYSE Arca", country:"Thailand"},
+  {name:"iShares MSCI Malaysia ETF",       ticker:"EWM",  cat:"Equity",       exchange:"NYSE Arca", country:"Malaysia"},
+  {name:"iShares MSCI Indonesia ETF",      ticker:"EIDO", cat:"Equity",       exchange:"NYSE Arca", country:"Indonesia"},
+  {name:"iShares MSCI Philippines ETF",    ticker:"EPHE", cat:"Equity",       exchange:"NYSE Arca", country:"Philippines"},
+  {name:"iShares MSCI Vietnam ETF",        ticker:"VNM",  cat:"Equity",       exchange:"NYSE Arca", country:"Vietnam"},
+
+  // ── Switzerland / Nordic ─────────────────────────────────────────
+  {name:"iShares MSCI Switzerland ETF",    ticker:"EWL",  cat:"Equity",       exchange:"NYSE Arca", country:"Switzerland"},
+  {name:"iShares MSCI Sweden ETF",         ticker:"EWD",  cat:"Equity",       exchange:"NYSE Arca", country:"Sweden"},
+  {name:"iShares MSCI Norway ETF",         ticker:"ENOR", cat:"Equity",       exchange:"NYSE Arca", country:"Norway"},
+  {name:"Global X MSCI Greece ETF",        ticker:"GREK", cat:"ETF",          exchange:"NYSE Arca", country:"Greece"},
+  {name:"iShares MSCI Italy ETF",          ticker:"EWI",  cat:"Equity",       exchange:"NYSE Arca", country:"Italy"},
+  {name:"iShares MSCI Spain ETF",          ticker:"EWP",  cat:"Equity",       exchange:"NYSE Arca", country:"Spain"},
+
+  // ── Latin America ────────────────────────────────────────────────
+  {name:"iShares Latin America 40 ETF",    ticker:"ILF",  cat:"ETF",          exchange:"NYSE Arca", country:"Latin America"},
+  {name:"iShares MSCI Chile ETF",          ticker:"ECH",  cat:"Equity",       exchange:"NYSE Arca", country:"Chile"},
+  {name:"Global X MSCI Colombia ETF",      ticker:"GXG",  cat:"ETF",          exchange:"NYSE Arca", country:"Colombia"},
+  {name:"iShares MSCI Peru ETF",           ticker:"EPU",  cat:"Equity",       exchange:"NYSE Arca", country:"Peru"},
+
+  // ── Frontier Markets ─────────────────────────────────────────────
+  {name:"iShares MSCI Frontier & Select",  ticker:"FM",   cat:"ETF",          exchange:"NYSE Arca", country:"Frontier Markets"},
+  {name:"Global X MSCI Pakistan ETF",      ticker:"PAK",  cat:"ETF",          exchange:"NYSE Arca", country:"Pakistan"},
+  {name:"VanEck Egypt ETF",                ticker:"EGPT", cat:"ETF",          exchange:"NYSE Arca", country:"Egypt"},
+  {name:"Global X Nigeria ETF",            ticker:"NGE",  cat:"ETF",          exchange:"NYSE Arca", country:"Nigeria"},
+
+  // ── Emerging Markets Broad ───────────────────────────────────────
+  {name:"iShares MSCI Emerging Markets",   ticker:"EEM",  cat:"ETF",          exchange:"NYSE Arca", country:"Emerging Markets"},
+  {name:"Vanguard FTSE Emerging Markets",  ticker:"VWO",  cat:"ETF",          exchange:"NYSE Arca", country:"Emerging Markets"},
+  {name:"SPDR Portfolio Emerging Markets", ticker:"SPEM", cat:"ETF",          exchange:"NYSE Arca", country:"Emerging Markets"},
+  {name:"Schwab Emerging Markets ETF",     ticker:"SCHE", cat:"ETF",          exchange:"NYSE Arca", country:"Emerging Markets"},
+];
+
+const POPULAR = ["VOO","SPY","QQQ","VTI","IBIT","GLD","AGG","VNQ","ARKK","SCHD","TLT","VEA","VWO","XLK","BND"];
+
+function filterFunds(q) {
+  const dd = document.getElementById('fundDropdown');
+  let hits;
+  if (!q.trim()) {
+    hits = POPULAR.map(t => FUNDS.find(f => f.ticker === t)).filter(Boolean);
+  } else {
+    const lower = q.toLowerCase();
+    hits = FUNDS.filter(f =>
+      f.name.toLowerCase().includes(lower) ||
+      f.ticker.toLowerCase().includes(lower) ||
+      (f.country || '').toLowerCase().includes(lower)
+    ).slice(0, 15);
+  }
+  if (!hits.length) { dd.style.display = 'none'; return; }
+  dd.innerHTML = hits.map(f => `
+    <div onclick="pickFund(${JSON.stringify(f).replace(/"/g,'&quot;')})" style="
+      padding:.55rem .9rem; cursor:pointer; display:flex; align-items:center; gap:.65rem;
+      border-bottom:1px solid var(--border); font-size:.85rem;
+    " onmouseenter="this.style.background='var(--bg2)'" onmouseleave="this.style.background=''">
+      <span style="font-weight:700;color:var(--accent);min-width:52px;flex-shrink:0;">${f.ticker}</span>
+      <span style="flex:1;color:var(--navy);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</span>
+      ${f.country ? `<span style="font-size:.7rem;color:var(--muted);white-space:nowrap;background:var(--bg2);border:1px solid var(--border);border-radius:3px;padding:.1rem .4rem;">${f.country}</span>` : ''}
+      <span style="font-size:.7rem;color:var(--muted);white-space:nowrap;">${f.cat}</span>
+    </div>
+  `).join('');
+  dd.style.display = 'block';
+}
+
+function pickFund(f) {
+  document.getElementById('inp_fund_name').value = f.name;
+  document.getElementById('inp_ticker').value = f.ticker;
+  document.getElementById('inp_exchange').value = f.exchange || '';
+  // select matching category radio
+  const radios = document.querySelectorAll('#catOpts input[type=radio]');
+  radios.forEach(r => { if (r.value === f.cat) r.checked = true; });
+  // clear search
+  document.getElementById('fundSearch').value = '';
+  document.getElementById('fundDropdown').style.display = 'none';
+}
+
+// close dropdown on outside click
+document.addEventListener('click', e => {
+  if (!e.target.closest('#fundSearch') && !e.target.closest('#fundDropdown'))
+    document.getElementById('fundDropdown').style.display = 'none';
+});
+</script>
+
+<!-- Edit Fund Modal -->
+<div id="editModal" class="modal-overlay" style="display:none;">
+  <div class="modal" style="width:520px;">
+    <div class="modal-header">
+      <h3>Edit Fund</h3>
+      <button class="modal-close" onclick="document.getElementById('editModal').style.display='none'">✕</button>
+    </div>
+    <form method="POST" id="editForm" action="">
+      <div class="field-group">
+        <label>Fund Name <span class="required">*</span></label>
+        <input id="edit_fund_name" name="fund_name" type="text" required>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
+        <div class="field-group">
+          <label>Ticker Symbol</label>
+          <input id="edit_ticker" name="ticker" type="text" style="text-transform:uppercase;">
+        </div>
+        <div class="field-group">
+          <label>Category</label>
+          <select id="edit_category" name="category" style="width:100%;padding:.5rem .75rem;border:1px solid var(--border);border-radius:var(--radius);font-size:.88rem;">
+            {% for cat in ['Equity','Fixed Income','ETF','Hedge Fund','Private Equity','Real Estate','Multi-Asset','Commodity','Crypto','Other'] %}
+            <option value="{{ cat }}">{{ cat }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Notes</label>
+        <textarea id="edit_notes" name="notes" rows="2"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-outline" onclick="document.getElementById('editModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openEdit(id, name, ticker, category, notes) {
+  document.getElementById('editForm').action = '/fund-research/' + id + '/edit';
+  document.getElementById('edit_fund_name').value = name;
+  document.getElementById('edit_ticker').value = ticker;
+  document.getElementById('edit_category').value = category;
+  document.getElementById('edit_notes').value = notes;
+  document.getElementById('editModal').style.display = 'flex';
+}
+</script>
+{% endblock %}

@@ -1,0 +1,1184 @@
+{% extends "base.html" %}
+{% block title %}{{ fund.fund_name }} — Fund Research Report{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+@media print {
+  .sidebar, .page-header .btn-outline, .page-header .btn-primary,
+  #regenBtn, #genBtn, .gen-box button, script { display: none !important; }
+  body { background: #fff !important; }
+  .r-card, .verdict-box, .report-hero, .sc-card, .dq-bar { break-inside: avoid; }
+}
+</style>
+<style>
+/* ── Layout ─────────────────────────────────────────────── */
+.report-hero {
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy2, #1a2a4a) 100%);
+  border-radius: var(--radius); padding: 2rem 2.25rem;
+  color: #fff; margin-bottom: 1.5rem;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.report-hero-left { display: flex; flex-direction: column; gap: .5rem; }
+.rh-name { font-size: 1.6rem; font-weight: 800; line-height: 1.2; }
+.rh-meta { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-top: .25rem; }
+.rh-ticker {
+  background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3);
+  padding: .2rem .65rem; border-radius: 4px; font-size: .82rem; font-weight: 700;
+}
+.rh-cat {
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+  padding: .2rem .65rem; border-radius: 999px; font-size: .75rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.rh-stamp { font-size: .78rem; opacity: .65; margin-top: .25rem; }
+
+/* ── Conviction badge ─────────────────────────────────── */
+.conviction-badge {
+  display: flex; flex-direction: column; align-items: center; gap: .35rem;
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+  border-radius: var(--radius); padding: .85rem 1.25rem; min-width: 140px; text-align: center;
+}
+.conv-label { font-size: .7rem; font-weight: 600; opacity: .7; text-transform: uppercase; letter-spacing: .06em; }
+.conv-rating {
+  font-size: 1.05rem; font-weight: 800;
+}
+.conv-rating.strong-buy { color: #34d399; }
+.conv-rating.buy { color: #6ee7b7; }
+.conv-rating.hold { color: #fbbf24; }
+.conv-rating.underperform { color: #fb923c; }
+.conv-rating.avoid { color: #f87171; }
+.conv-score { font-size: .82rem; opacity: .75; }
+
+/* ── Generate button / state ──────────────────────────── */
+.gen-box {
+  background: var(--white); border: 2px dashed var(--border);
+  border-radius: var(--radius); padding: 3rem 2rem;
+  text-align: center; margin-bottom: 1.5rem;
+}
+.gen-box h3 { color: var(--navy); font-size: 1.15rem; margin-bottom: .5rem; }
+.gen-box p { color: var(--muted); font-size: .88rem; margin-bottom: 1.5rem; max-width: 480px; margin-left: auto; margin-right: auto; }
+.gen-progress { font-size: .85rem; color: var(--muted); margin-top: 1rem; display: none; }
+
+/* ── Section cards ───────────────────────────────────── */
+.r-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+.r-grid.thirds { grid-template-columns: 1fr 1fr 1fr; }
+.r-grid.wide { grid-template-columns: 2fr 1fr; }
+@media (max-width: 900px) { .r-grid, .r-grid.thirds, .r-grid.wide { grid-template-columns: 1fr; } }
+
+.r-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.r-card-head {
+  padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+  font-size: .82rem; font-weight: 700; color: var(--navy); text-transform: uppercase;
+  letter-spacing: .05em; display: flex; align-items: center; gap: .4rem;
+}
+.r-card-body { padding: 1.25rem; }
+
+/* ── KV pairs ────────────────────────────────────────── */
+.kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .75rem; }
+.kv-item {}
+.kv-label { font-size: .7rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.kv-val { font-size: .88rem; color: var(--text, var(--navy)); font-weight: 500; margin-top: .1rem; }
+
+/* ── Performance table ───────────────────────────────── */
+.perf-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.perf-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: .72rem;
+  text-transform: uppercase; letter-spacing: .04em; padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
+.perf-table td { padding: .45rem .5rem; border-bottom: 1px solid var(--border); }
+.perf-table tr:last-child td { border-bottom: none; }
+.pos { color: #059669; font-weight: 600; }
+.neg { color: #dc2626; font-weight: 600; }
+
+/* ── Risk chip ───────────────────────────────────────── */
+.risk-chip {
+  display: inline-block; padding: .25rem .75rem; border-radius: 999px;
+  font-size: .78rem; font-weight: 700; letter-spacing: .04em;
+}
+.risk-Low { background: #d1fae5; color: #065f46; }
+.risk-Medium { background: #fef3c7; color: #92400e; }
+.risk-High { background: #fee2e2; color: #991b1b; }
+.risk-Very { background: #fce7f3; color: #9d174d; }
+
+/* ── Risk factor list ────────────────────────────────── */
+.risk-list { display: flex; flex-direction: column; gap: .6rem; }
+.risk-item { display: flex; gap: .65rem; align-items: flex-start; }
+.risk-sev {
+  flex-shrink: 0; padding: .15rem .55rem; border-radius: 4px;
+  font-size: .68rem; font-weight: 700; text-transform: uppercase; margin-top: .1rem;
+}
+.sev-High { background: #fee2e2; color: #991b1b; }
+.sev-Medium { background: #fef3c7; color: #92400e; }
+.sev-Low { background: #d1fae5; color: #065f46; }
+.risk-exp { font-size: .83rem; color: var(--muted); }
+.risk-name { font-size: .85rem; font-weight: 600; color: var(--navy); }
+
+/* ── Outlook scenario cards ──────────────────────────── */
+.scenario-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1.25rem; }
+@media (max-width: 800px) { .scenario-cards { grid-template-columns: 1fr; } }
+.sc-card { border-radius: var(--radius); padding: 1.25rem; border: 1px solid; }
+.sc-bull { background: #f0fdf4; border-color: #86efac; }
+.sc-base { background: #eff6ff; border-color: #93c5fd; }
+.sc-bear { background: #fff7ed; border-color: #fca5a5; }
+.sc-label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .5rem; }
+.sc-bull .sc-label { color: #15803d; }
+.sc-base .sc-label { color: #1d4ed8; }
+.sc-bear .sc-label { color: #c2410c; }
+.sc-ret { font-size: 1.6rem; font-weight: 800; line-height: 1; margin-bottom: .15rem; }
+.sc-bull .sc-ret { color: #15803d; }
+.sc-base .sc-ret { color: #1d4ed8; }
+.sc-bear .sc-ret { color: #c2410c; }
+.sc-cum { font-size: .82rem; font-weight: 600; margin-bottom: .65rem; }
+.sc-bull .sc-cum { color: #166534; }
+.sc-base .sc-cum { color: #1e40af; }
+.sc-bear .sc-cum { color: #9a3412; }
+.sc-prob { font-size: .75rem; margin-bottom: .6rem; }
+.sc-rationale { font-size: .8rem; line-height: 1.5; }
+.sc-bull .sc-rationale { color: #166534; }
+.sc-base .sc-rationale { color: #1e3a8a; }
+.sc-bear .sc-rationale { color: #9a3412; }
+
+/* ── Tag cloud ───────────────────────────────────────── */
+.tag-list { display: flex; flex-wrap: wrap; gap: .4rem; }
+.tag {
+  padding: .25rem .7rem; border-radius: 999px; font-size: .78rem; font-weight: 500;
+  background: var(--bg2); color: var(--muted); border: 1px solid var(--border);
+}
+.tag.tail { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+.tag.head { background: #fef2f2; color: #991b1b; border-color: #fca5a5; }
+
+/* ── Holdings/allocation bar ──────────────────────────── */
+.alloc-list { display: flex; flex-direction: column; gap: .45rem; }
+.alloc-row { display: flex; align-items: center; gap: .6rem; font-size: .82rem; }
+.alloc-name { flex: 1; color: var(--navy); font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alloc-bar-wrap { width: 100px; height: 6px; background: var(--bg2); border-radius: 3px; flex-shrink: 0; }
+.alloc-bar { height: 6px; border-radius: 3px; background: var(--accent); }
+.alloc-pct { width: 40px; text-align: right; color: var(--muted); flex-shrink: 0; }
+
+/* ── Milestone timeline ───────────────────────────────── */
+.timeline { display: flex; flex-direction: column; gap: .75rem; }
+.tl-item { display: flex; gap: .85rem; align-items: flex-start; }
+.tl-year {
+  flex-shrink: 0; width: 44px; text-align: center; font-size: .72rem; font-weight: 700;
+  background: var(--navy); color: #fff; border-radius: 4px; padding: .2rem 0;
+}
+.tl-text { font-size: .84rem; color: var(--muted); padding-top: .15rem; }
+
+/* ── Verdict box ─────────────────────────────────────── */
+.verdict-box {
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy2, #1a2a4a) 100%);
+  border-radius: var(--radius); padding: 1.75rem 2rem; color: #fff;
+  margin-bottom: 1.25rem;
+}
+.verdict-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.verdict-title { font-size: 1rem; font-weight: 700; opacity: .75; text-transform: uppercase; letter-spacing: .06em; }
+.verdict-rating { font-size: 1.4rem; font-weight: 800; }
+.verdict-summary { font-size: .92rem; line-height: 1.65; opacity: .9; margin-bottom: 1rem; }
+.verdict-why { font-size: .85rem; opacity: .8; line-height: 1.6; }
+.verdict-pills { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: 1rem; }
+.verdict-pill {
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
+  border-radius: 4px; padding: .35rem .8rem; font-size: .78rem;
+}
+.verdict-pill strong { display: block; font-size: .65rem; opacity: .7; text-transform: uppercase; letter-spacing: .04em; margin-bottom: .15rem; }
+
+/* ── Data quality banner ─────────────────────────────── */
+.dq-bar {
+  display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .75rem 1.25rem;
+  font-size: .82rem; color: var(--muted); margin-bottom: 1.25rem;
+}
+.dq-badge {
+  padding: .2rem .65rem; border-radius: 4px; font-size: .75rem; font-weight: 700;
+}
+.dq-High { background: #d1fae5; color: #065f46; }
+.dq-Medium { background: #fef3c7; color: #92400e; }
+.dq-Low { background: #fee2e2; color: #991b1b; }
+
+/* ── Loader ──────────────────────────────────────────── */
+.spin {
+  display: inline-block; width: 20px; height: 20px;
+  border: 3px solid rgba(255,255,255,.3); border-top-color: #fff;
+  border-radius: 50%; animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Full-screen generation loader ──────────────────── */
+#genOverlay {
+  display: none;
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(10, 18, 40, 0.82);
+  backdrop-filter: blur(4px);
+  flex-direction: column; align-items: center; justify-content: center; gap: 1.5rem;
+}
+#genOverlay.active { display: flex; }
+.gen-spinner {
+  width: 56px; height: 56px;
+  border: 5px solid rgba(255,255,255,.15);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .75s linear infinite;
+}
+.gen-overlay-title { color: #fff; font-size: 1.15rem; font-weight: 700; }
+.gen-overlay-step  { color: rgba(255,255,255,.65); font-size: .88rem; min-height: 1.4em; transition: opacity .3s; }
+.gen-progress-track {
+  width: 260px; height: 4px; background: rgba(255,255,255,.15); border-radius: 2px; overflow: hidden;
+}
+.gen-progress-fill {
+  height: 100%; width: 0%; background: #fff; border-radius: 2px;
+  transition: width 7s linear;
+}
+.gen-steps-list {
+  display: flex; flex-direction: column; gap: .35rem; align-items: flex-start;
+}
+.gen-step-item {
+  display: flex; align-items: center; gap: .55rem;
+  color: rgba(255,255,255,.45); font-size: .8rem; transition: color .3s;
+}
+.gen-step-item.done  { color: rgba(255,255,255,.9); }
+.gen-step-item.active { color: #fff; font-weight: 600; }
+.gen-step-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.25); flex-shrink: 0;
+  transition: background .3s;
+}
+.gen-step-item.done  .gen-step-dot { background: #34d399; }
+.gen-step-item.active .gen-step-dot { background: #fff; animation: dotPulse 1s ease-in-out infinite; }
+@keyframes dotPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(1.4)} }
+@keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <a href="{{ url_for('fund_research') }}" style="color:var(--muted);font-weight:400;font-size:.9rem;text-decoration:none;">⚠️ Fund Research</a>
+      <span style="color:var(--muted);font-weight:300;margin:0 .4rem;">/</span>
+      {{ fund.fund_name }}
+    </h1>
+  </div>
+  <div style="display:flex;gap:.75rem;align-items:center;">
+    {% if report %}
+    <button class="btn-outline btn-sm" onclick="exportPDF()" id="pdfBtn">⬇ Export PDF</button>
+    <button class="btn-outline btn-sm" id="regenBtn" onclick="generateReport()">↻ Regenerate</button>
+    {% endif %}
+    <a href="{{ url_for('fund_research') }}" class="btn-outline btn-sm">← Back</a>
+  </div>
+</div>
+
+{% if report %}
+<div id="reportContent">
+<!-- ── Hero ────────────────────────────────────────────────────── -->
+{% set ov = report.get('fund_overview', {}) %}
+{% set av = report.get('analyst_verdict', {}) %}
+<div class="report-hero">
+  <div class="report-hero-left">
+    <div class="rh-name">{{ ov.get('full_name') or fund.fund_name }}</div>
+    <div class="rh-meta">
+      {% if ov.get('ticker') or fund.ticker %}<span class="rh-ticker">{{ ov.get('ticker') or fund.ticker }}</span>{% endif %}
+      {% if ov.get('fund_type') %}<span class="rh-cat">{{ ov.get('fund_type') }}</span>{% endif %}
+      {% if ov.get('asset_class') %}<span class="rh-cat">{{ ov.get('asset_class') }}</span>{% endif %}
+    </div>
+    {% if ov.get('strategy_summary') %}
+    <div style="font-size:.88rem;opacity:.8;max-width:520px;margin-top:.35rem;line-height:1.55;">{{ ov.get('strategy_summary') }}</div>
+    {% endif %}
+    <div class="rh-stamp">
+      Report generated {{ report.get('_generated_at', report.get('generated_at', ''))[:19] | replace('T',' ') }}
+    </div>
+  </div>
+
+  {% if av.get('conviction_rating') %}
+  <div class="conviction-badge">
+    <div class="conv-label">Analyst Verdict</div>
+    {% set cr = av.get('conviction_rating','Hold') %}
+    <div class="conv-rating {% if cr == 'Strong Buy' %}strong-buy{% elif cr == 'Buy' %}buy{% elif cr == 'Hold' %}hold{% elif cr == 'Underperform' %}underperform{% else %}avoid{% endif %}">
+      {{ cr }}
+    </div>
+    {% if av.get('conviction_score') is not none %}
+    {% set raw_score = av.get('conviction_score') | float %}
+    {% set score = (raw_score / 10) | round(1) if raw_score > 10 else raw_score %}
+    <div class="conv-score">Score: {{ score | int if score == score | int else score }} / 10</div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Data Quality ─────────────────────────────────────────────── -->
+{% set dq = report.get('data_quality', {}) %}
+{% if dq %}
+<div class="dq-bar">
+  <span>Data Quality:</span>
+  <span class="dq-badge dq-{{ dq.get('data_completeness','Medium') }}">{{ dq.get('data_completeness','—') }}</span>
+  <span>Sources found: <strong>{{ dq.get('sources_found','—') }}</strong></span>
+  {% if dq.get('caveats') %}
+  <span>·</span>
+  {% for c in dq.get('caveats', []) %}<span>{{ c }}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- ── Fund Overview + Historical Performance ────────────────────── -->
+<div class="r-grid wide">
+  <div class="r-card">
+    <div class="r-card-head">📋 Fund Overview</div>
+    <div class="r-card-body">
+      <div class="kv-grid">
+        {% set overview_fields = [
+          ('Manager', ov.get('manager')),
+          ('Benchmark', ov.get('benchmark')),
+          ('Inception Date', ov.get('inception_date')),
+          ('AUM', ov.get('aum_usd')),
+          ('Expense Ratio', ov.get('expense_ratio')),
+          ('Category', ov.get('category') or fund.category),
+        ] %}
+        {% for label, val in overview_fields %}
+        {% if val and (val | lower) not in ['', 'n/a', 'unavailable', 'not available', 'unknown', 'none', '-', '—'] %}
+        <div class="kv-item">
+          <div class="kv-label">{{ label }}</div>
+          <div class="kv-val">{{ val }}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {% set hp = report.get('historical_performance', {}) %}
+  <div class="r-card">
+    <div class="r-card-head">📈 Historical Performance</div>
+    <div class="r-card-body" style="padding:0;">
+      <table class="perf-table">
+        <thead><tr><th>Period</th><th>Return</th></tr></thead>
+        <tbody>
+          {% set perf_rows = [
+            ('YTD', hp.get('ytd')),
+            ('1 Year', hp.get('1_year')),
+            ('3Y Annualised', hp.get('3_year_annualised')),
+            ('5Y Annualised', hp.get('5_year_annualised')),
+            ('10Y Annualised', hp.get('10_year_annualised')),
+            ('Since Inception', hp.get('since_inception')),
+            ('Max Drawdown', hp.get('max_drawdown')),
+            ('Sharpe Ratio', hp.get('sharpe_ratio')),
+            ('vs Benchmark', hp.get('vs_benchmark')),
+          ] %}
+          {% for label, val in perf_rows %}
+          {% set val_low = (val or '') | lower %}
+          {% if val and val_low not in ['', 'n/a', 'unavailable', 'not available', 'unknown', 'none', '-', '—'] %}
+          <tr>
+            <td>{{ label }}</td>
+            <td class="{% if val and val[0] == '-' %}neg{% elif val and val[0:1] in ['+','0','1','2','3','4','5','6','7','8','9'] %}pos{% endif %}">{{ val }}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── Trend Chart + Notable Periods ──────────────────────────────── -->
+{% set valid_periods = [] %}
+{% for p in hp.get('notable_periods', []) %}
+  {% set pv = (p.get('period') or '') | lower %}
+  {% set rv = (p.get('return') or '') | lower %}
+  {% if pv not in ['', 'unavailable', 'n/a', 'unknown', '-'] and rv not in ['', 'unavailable', 'n/a', 'unknown', '-'] %}
+    {% set _ = valid_periods.append(p) %}
+  {% endif %}
+{% endfor %}
+
+<div class="r-grid" style="margin-bottom:1.25rem;">
+  <!-- Performance Trend Chart -->
+  <div class="r-card">
+    <div class="r-card-head">📈 Performance Snapshot</div>
+    <div class="r-card-body">
+      {% set chart_labels = [] %}
+      {% set chart_values = [] %}
+      {% set perf_chart = [
+        ('YTD', hp.get('ytd')),
+        ('1Y', hp.get('1_year')),
+        ('3Y Ann.', hp.get('3_year_annualised')),
+        ('5Y Ann.', hp.get('5_year_annualised')),
+        ('10Y Ann.', hp.get('10_year_annualised')),
+      ] %}
+      {% for lbl, v in perf_chart %}
+        {% set vl = (v or '') | lower %}
+        {% if v and vl not in ['', 'unavailable', 'n/a', 'unknown', '-', '—'] %}
+          {% set _ = chart_labels.append(lbl) %}
+          {% set _ = chart_values.append(v | replace('%','') | replace('+','')) %}
+        {% endif %}
+      {% endfor %}
+      {% if chart_labels %}
+      <canvas id="perfChart" height="160"></canvas>
+      <script>
+      (function(){
+        const labels = {{ chart_labels | tojson }};
+        const values = {{ chart_values | tojson }}.map(v => parseFloat(v) || 0);
+        const colors = values.map(v => v >= 0 ? 'rgba(5,150,105,.8)' : 'rgba(220,38,38,.8)');
+        const borderColors = values.map(v => v >= 0 ? '#059669' : '#dc2626');
+        new Chart(document.getElementById('perfChart'), {
+          type: 'bar',
+          data: { labels, datasets:[{ label:'Return %', data:values, backgroundColor:colors, borderColor:borderColors, borderWidth:1.5, borderRadius:4 }]},
+          options:{
+            responsive:true, plugins:{legend:{display:false},
+              tooltip:{callbacks:{label:ctx=>(ctx.raw>=0?'+':'')+ctx.raw.toFixed(2)+'%'}}},
+            scales:{
+              x:{grid:{display:false}, ticks:{font:{size:11}}},
+              y:{grid:{color:'rgba(0,0,0,.06)'}, ticks:{callback:v=>(v>=0?'+':'')+v+'%', font:{size:11}}, border:{dash:[3,3]}}
+            }
+          }
+        });
+      })();
+      </script>
+      {% else %}
+      <div style="text-align:center;padding:2rem;color:var(--muted);font-size:.88rem;">
+        Chart data not available — regenerate report for latest figures.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Notable Periods -->
+  {% if valid_periods %}
+  <div class="r-card">
+    <div class="r-card-head">🕐 Notable Periods</div>
+    <div class="r-card-body" style="padding:0;">
+      <table class="perf-table">
+        <thead><tr><th>Period</th><th>Return</th><th>Context</th></tr></thead>
+        <tbody>
+          {% for p in valid_periods %}
+          <tr>
+            <td style="font-weight:600;color:var(--navy);">{{ p.get('period') }}</td>
+            <td class="{% if (p.get('return','') or '')[0:1] == '-' %}neg{% else %}pos{% endif %}">{{ p.get('return','—') }}</td>
+            <td style="color:var(--muted);">{{ p.get('context','') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Portfolio Composition ──────────────────────────────────────── -->
+{% set pc = report.get('portfolio_composition', {}) %}
+{% set BAD = ['', 'unavailable', 'n/a', 'not available', 'unknown', 'none', '-', '—'] %}
+
+{% set valid_holdings = [] %}
+{% for h in pc.get('top_holdings', []) %}
+  {% if (h.get('name') or '') | lower not in BAD %}{% set _ = valid_holdings.append(h) %}{% endif %}
+{% endfor %}
+
+{% set valid_sectors = [] %}
+{% for s in pc.get('sector_allocation', []) %}
+  {% if (s.get('sector') or '') | lower not in BAD %}{% set _ = valid_sectors.append(s) %}{% endif %}
+{% endfor %}
+
+{% set valid_geo = [] %}
+{% for g in pc.get('geographic_exposure', []) %}
+  {% if (g.get('region') or '') | lower not in BAD %}{% set _ = valid_geo.append(g) %}{% endif %}
+{% endfor %}
+
+{% if valid_holdings or valid_sectors or valid_geo %}
+<div class="r-grid thirds">
+  {% if valid_holdings %}
+  <div class="r-card">
+    <div class="r-card-head">🏦 Top Holdings</div>
+    <div class="r-card-body">
+      <div class="alloc-list">
+        {% for h in valid_holdings[:10] %}
+        {% set pct_str = (h.get('weight','0') | replace('%','') | replace('unavailable','0') | replace('Unavailable','0')) %}
+        <div class="alloc-row">
+          <span class="alloc-name" title="{{ h.get('name','') }}{% if h.get('sector') %} — {{ h.get('sector') }}{% endif %}">{{ h.get('name','') }}</span>
+          <div class="alloc-bar-wrap"><div class="alloc-bar" style="width:{{ [pct_str|float, 100]|min }}%"></div></div>
+          {% if pct_str | float > 0 %}<span class="alloc-pct">{{ h.get('weight','') }}</span>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if valid_sectors %}
+  <div class="r-card">
+    <div class="r-card-head">📊 Sector Allocation</div>
+    <div class="r-card-body">
+      <div class="alloc-list">
+        {% for s in valid_sectors[:10] %}
+        {% set pct_str = (s.get('weight','0') | replace('%','') | replace('unavailable','0') | replace('Unavailable','0')) %}
+        <div class="alloc-row">
+          <span class="alloc-name">{{ s.get('sector','') }}</span>
+          <div class="alloc-bar-wrap"><div class="alloc-bar" style="width:{{ [pct_str|float, 100]|min }}%;background:var(--gold,#d4a017);"></div></div>
+          {% if pct_str | float > 0 %}<span class="alloc-pct">{{ s.get('weight','') }}</span>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if valid_geo %}
+  <div class="r-card">
+    <div class="r-card-head">🌍 Geographic Exposure</div>
+    <div class="r-card-body">
+      <div class="alloc-list">
+        {% for g in valid_geo[:10] %}
+        {% set pct_str = (g.get('weight','0') | replace('%','') | replace('unavailable','0') | replace('Unavailable','0')) %}
+        <div class="alloc-row">
+          <span class="alloc-name">{{ g.get('region','') }}</span>
+          <div class="alloc-bar-wrap"><div class="alloc-bar" style="width:{{ [pct_str|float, 100]|min }}%;background:#7c3aed;"></div></div>
+          {% if pct_str | float > 0 %}<span class="alloc-pct">{{ g.get('weight','') }}</span>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- ── Risk Assessment ────────────────────────────────────────────── -->
+{% set ra = report.get('risk_assessment', {}) %}
+<div class="r-grid">
+  <div class="r-card">
+    <div class="r-card-head">⚡ Risk Assessment</div>
+    <div class="r-card-body">
+      <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;">
+        {% if ra.get('overall_risk_rating') %}
+        <span class="risk-chip risk-{{ ra.get('overall_risk_rating','').split()[0] }}">{{ ra.get('overall_risk_rating') }} Risk</span>
+        {% endif %}
+        {% if ra.get('volatility_profile') %}
+        <span style="font-size:.85rem;color:var(--muted);">{{ ra.get('volatility_profile') }}</span>
+        {% endif %}
+      </div>
+      {% if ra.get('key_risks') %}
+      <div class="risk-list">
+        {% for r in ra.get('key_risks', [])[:6] %}
+        <div class="risk-item">
+          <span class="risk-sev sev-{{ r.get('severity','Medium') }}">{{ r.get('severity','') }}</span>
+          <div>
+            <div class="risk-name">{{ r.get('risk','') }}</div>
+            <div class="risk-exp">{{ r.get('explanation','') }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if ra.get('liquidity_risk') %}
+      <div style="margin-top:.85rem;padding-top:.85rem;border-top:1px solid var(--border);font-size:.83rem;color:var(--muted);">
+        <strong>Liquidity:</strong> {{ ra.get('liquidity_risk') }}
+      </div>
+      {% endif %}
+      {% if ra.get('correlation_to_market') %}
+      <div style="margin-top:.5rem;font-size:.83rem;color:var(--muted);">
+        <strong>Market correlation:</strong> {{ ra.get('correlation_to_market') }}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Market Trends -->
+  {% set mt = report.get('market_trends', {}) %}
+  <div class="r-card">
+    <div class="r-card-head">🌐 Market Trends</div>
+    <div class="r-card-body">
+      {% if mt.get('macro_tailwinds') %}
+      <div style="margin-bottom:.85rem;">
+        <div class="kv-label" style="margin-bottom:.4rem;">Tailwinds</div>
+        <div class="tag-list">
+          {% for t in mt.get('macro_tailwinds', []) %}<span class="tag">{{ t }}</span>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if mt.get('macro_headwinds') %}
+      <div style="margin-bottom:.85rem;">
+        <div class="kv-label" style="margin-bottom:.4rem;">Headwinds</div>
+        <div class="tag-list">
+          {% for t in mt.get('macro_headwinds', []) %}<span class="tag head">{{ t }}</span>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if mt.get('sector_trends') %}
+      <div style="margin-bottom:.85rem;">
+        <div class="kv-label" style="margin-bottom:.4rem;">Sector Trends</div>
+        <div class="tag-list">
+          {% for t in mt.get('sector_trends', []) %}<span class="tag tail">{{ t }}</span>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if mt.get('competitive_landscape') %}
+      <div style="font-size:.83rem;color:var(--muted);line-height:1.55;border-top:1px solid var(--border);padding-top:.75rem;margin-top:.5rem;">
+        <strong>Competitive landscape:</strong> {{ mt.get('competitive_landscape') }}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ── 5-Year Outlook ─────────────────────────────────────────────── -->
+{% set fo = report.get('five_year_outlook', {}) %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem;">
+  <div class="r-card-head" style="background:none;border:none;padding:.5rem 0;font-size:.85rem;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.05em;">
+    🔮 5-Year Outlook &amp; Scenarios
+  </div>
+  <span style="font-size:.75rem;color:var(--muted);">AI-generated projection · not financial advice</span>
+</div>
+
+<div class="scenario-cards">
+  {% for key, cls, emoji, label in [('bull_case','bull','🟢','Bull Case'), ('base_case','base','🔵','Base Case'), ('bear_case','bear','🔴','Bear Case')] %}
+  {% set sc = fo.get(key, {}) %}
+  {% if sc %}
+  <div class="sc-card sc-{{ cls }}">
+    <div class="sc-label">{{ emoji }} {{ sc.get('scenario') or label }}</div>
+    {% set ar = sc.get('predicted_annual_return','') | lower %}
+    {% if sc.get('predicted_annual_return') and ar not in ['', 'unavailable', 'n/a'] %}
+    <div class="sc-ret">{{ sc.get('predicted_annual_return') }}<span style="font-size:.9rem;font-weight:400;">/yr</span></div>
+    {% endif %}
+    {% set cr = sc.get('predicted_5yr_cumulative','') | lower %}
+    {% if sc.get('predicted_5yr_cumulative') and cr not in ['', 'unavailable', 'n/a'] %}
+    <div class="sc-cum">{{ sc.get('predicted_5yr_cumulative') }} cumulative (5yr)</div>
+    {% endif %}
+    {% if sc.get('probability') %}
+    <div class="sc-prob" style="font-size:.78rem;margin-bottom:.5rem;">Probability: <strong>{{ sc.get('probability') }}</strong></div>
+    {% endif %}
+    {% if sc.get('rationale') %}
+    <div class="sc-rationale" style="margin-bottom:.6rem;">{{ sc.get('rationale') }}</div>
+    {% endif %}
+    {% set ka = sc.get('key_assumptions', []) %}
+    {% if ka %}
+    <div style="border-top:1px solid rgba(0,0,0,.08);padding-top:.55rem;margin-top:.35rem;">
+      <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;opacity:.65;margin-bottom:.35rem;">Key Assumptions</div>
+      {% for a in ka %}
+      {% if (a | lower) not in ['', 'unavailable', 'n/a'] %}
+      <div style="font-size:.77rem;opacity:.82;margin-bottom:.2rem;">• {{ a }}</div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>
+
+<!-- Key Milestones -->
+{% set valid_milestones = [] %}
+{% for m in fo.get('key_milestones', []) %}
+  {% set dev = (m.get('expected_development') or '') | lower %}
+  {% if dev and dev not in ['', 'unavailable', 'n/a', 'unknown'] and m.get('year') %}
+    {% set _ = valid_milestones.append(m) %}
+  {% endif %}
+{% endfor %}
+{% if valid_milestones %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📅 Year-by-Year Milestones</div>
+  <div class="r-card-body">
+    <div style="display:flex;flex-direction:column;gap:0;">
+      {% for m in valid_milestones %}
+      {% set prob = m.get('probability','Medium') %}
+      <div style="display:flex;gap:1.1rem;align-items:flex-start;padding:1rem 0;{% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
+        <!-- Year pill -->
+        <div style="flex-shrink:0;text-align:center;min-width:52px;">
+          <div style="background:var(--navy);color:#fff;border-radius:6px;padding:.3rem .5rem;font-size:.85rem;font-weight:800;">{{ m.get('year') }}</div>
+          <div style="margin-top:.4rem;padding:.15rem .35rem;border-radius:999px;font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+            {% if prob == 'High' %}background:#d1fae5;color:#065f46;{% elif prob == 'Low' %}background:#fee2e2;color:#991b1b;{% else %}background:#fef3c7;color:#92400e;{% endif %}">
+            {{ prob }}
+          </div>
+        </div>
+        <!-- Detail -->
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:.92rem;font-weight:700;color:var(--navy);margin-bottom:.35rem;">{{ m.get('expected_development') }}</div>
+          {% set why = m.get('why','') | lower %}
+          {% if m.get('why') and why not in ['', 'unavailable', 'n/a'] %}
+          <div style="font-size:.83rem;color:var(--muted);line-height:1.6;margin-bottom:.35rem;">
+            <strong style="color:var(--navy);">Why:</strong> {{ m.get('why') }}
+          </div>
+          {% endif %}
+          {% set impact = m.get('impact_on_fund','') | lower %}
+          {% if m.get('impact_on_fund') and impact not in ['', 'unavailable', 'n/a'] %}
+          <div style="font-size:.82rem;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:.4rem .65rem;display:inline-block;">
+            <strong>Impact on Fund:</strong> {{ m.get('impact_on_fund') }}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Disclaimer -->
+<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:var(--radius);padding:1rem 1.25rem;margin-bottom:1.25rem;display:flex;gap:.75rem;align-items:flex-start;">
+  <span style="font-size:1.1rem;flex-shrink:0;">⚠️</span>
+  <div style="font-size:.78rem;color:#92400e;line-height:1.6;">
+    <strong>Important Disclaimer:</strong> This report is generated by an AI research agent using publicly available web data and is provided for informational purposes only. It does <strong>not</strong> constitute financial advice, investment recommendations, or an offer to buy or sell any security. Past performance is not indicative of future results. All projections and scenario forecasts are hypothetical estimates based on available evidence and model assumptions — actual outcomes may differ materially. Always consult a qualified financial adviser before making investment decisions.
+  </div>
+</div>
+
+<!-- ── Geopolitical Risk & Market Emotion ────────────────────────── -->
+{% set geo = report.get('geopolitical_risks', {}) %}
+{% if geo %}
+{% set me = geo.get('market_emotion', {}) %}
+{% set sent_score = me.get('sentiment_score', 50) | float %}
+{% set sent_label = me.get('current_sentiment', 'Neutral') %}
+{% set geo_risk = geo.get('overall_geo_risk', '') %}
+
+<!-- Market Emotion Gauge + Geo Risk overview -->
+<div class="r-grid" style="margin-bottom:1.25rem;">
+  <!-- Emotion Gauge -->
+  <div class="r-card">
+    <div class="r-card-head">🧠 Market Emotion & Sentiment</div>
+    <div class="r-card-body" style="text-align:center;">
+      <!-- Gauge bar -->
+      <div style="position:relative;margin:0 auto 1rem;max-width:320px;">
+        <div style="height:14px;border-radius:7px;background:linear-gradient(to right,#dc2626,#f97316,#eab308,#84cc16,#16a34a);margin-bottom:.5rem;"></div>
+        <div style="position:absolute;top:-4px;left:calc({{ [sent_score,99]|min }}% - 10px);width:20px;height:22px;background:var(--navy);border-radius:3px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.65rem;color:var(--muted);margin-bottom:.85rem;max-width:320px;margin-left:auto;margin-right:auto;">
+        <span>Extreme Fear</span><span>Fear</span><span>Neutral</span><span>Greed</span><span>Extreme Greed</span>
+      </div>
+      <div style="font-size:1.5rem;font-weight:800;color:
+        {% if sent_score < 25 %}#dc2626
+        {% elif sent_score < 45 %}#f97316
+        {% elif sent_score < 55 %}#eab308
+        {% elif sent_score < 75 %}#84cc16
+        {% else %}#16a34a{% endif %};">
+        {{ sent_label }}
+      </div>
+      <div style="font-size:2rem;font-weight:900;color:var(--navy);margin:.1rem 0;">{{ sent_score | int }}<span style="font-size:1rem;font-weight:400;color:var(--muted);">/100</span></div>
+      {% if me.get('driver') %}
+      <div style="font-size:.82rem;color:var(--muted);margin-top:.4rem;line-height:1.55;">{{ me.get('driver') }}</div>
+      {% endif %}
+      {% if me.get('vix_level') %}
+      <div style="margin-top:.6rem;display:inline-block;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:.3rem .75rem;font-size:.8rem;">
+        VIX: <strong>{{ me.get('vix_level') }}</strong>
+      </div>
+      {% endif %}
+      {% if me.get('investor_behaviour') %}
+      <div style="font-size:.8rem;color:var(--muted);margin-top:.6rem;font-style:italic;">{{ me.get('investor_behaviour') }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Geo Risk Overview -->
+  <div class="r-card">
+    <div class="r-card-head">🌍 Geopolitical Risk Overview</div>
+    <div class="r-card-body">
+      {% if geo_risk %}
+      <div style="margin-bottom:1rem;display:flex;align-items:center;gap:.75rem;">
+        <span style="font-size:.75rem;color:var(--muted);font-weight:600;">Overall Risk:</span>
+        <span class="risk-chip risk-{% if geo_risk == 'Critical' or geo_risk == 'High' %}High{% elif geo_risk == 'Moderate' %}Medium{% else %}Low{% endif %}">
+          {{ geo_risk }}
+        </span>
+      </div>
+      {% endif %}
+      {% if geo.get('geo_outlook_summary') %}
+      <div style="font-size:.85rem;color:var(--muted);line-height:1.65;margin-bottom:1rem;">{{ geo.get('geo_outlook_summary') }}</div>
+      {% endif %}
+      <!-- Active conflicts quick list -->
+      {% set conflicts = geo.get('active_conflicts', []) | selectattr('conflict') | list %}
+      {% if conflicts %}
+      <div style="display:flex;flex-direction:column;gap:.4rem;">
+        {% for c in conflicts[:4] %}
+        {% set sev = c.get('severity','Medium') %}
+        <div style="display:flex;gap:.55rem;align-items:flex-start;padding:.4rem .6rem;border-radius:4px;background:var(--bg2);border:1px solid var(--border);">
+          <span style="flex-shrink:0;font-size:.75rem;font-weight:700;padding:.1rem .4rem;border-radius:3px;
+            {% if sev == 'High' %}background:#fee2e2;color:#991b1b;
+            {% elif sev == 'Low' %}background:#d1fae5;color:#065f46;
+            {% else %}background:#fef3c7;color:#92400e;{% endif %}">{{ sev }}</span>
+          <div>
+            <div style="font-size:.83rem;font-weight:600;color:var(--navy);">{{ c.get('conflict') }} <span style="font-weight:400;color:var(--muted);">· {{ c.get('region','') }}</span></div>
+            {% if c.get('direct_impact_on_fund') %}
+            <div style="font-size:.78rem;color:var(--muted);">{{ c.get('direct_impact_on_fund') }}</div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Sanctions & Black Market -->
+{% set sbm = geo.get('sanctions_black_market', []) | selectattr('event') | list %}
+{% if sbm %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">⚫ Sanctions & Shadow Market Activity</div>
+  <div class="r-card-body" style="padding:0;">
+    {% for s in sbm %}
+    <div style="padding:.85rem 1.25rem;border-bottom:1px solid var(--border);display:grid;grid-template-columns:2fr 1fr 1fr;gap:.75rem;align-items:start;">
+      <div>
+        <div style="font-size:.88rem;font-weight:700;color:var(--navy);margin-bottom:.25rem;">{{ s.get('event') }}</div>
+        {% if s.get('example') %}
+        <div style="font-size:.78rem;color:var(--muted);font-style:italic;">e.g. {{ s.get('example') }}</div>
+        {% endif %}
+      </div>
+      <div>
+        <div style="font-size:.7rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.2rem;">Countries</div>
+        <div style="font-size:.82rem;color:var(--navy);">{{ s.get('countries_involved', []) | join(', ') }}</div>
+      </div>
+      <div>
+        <div style="font-size:.7rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.2rem;">Fund Impact</div>
+        <div style="font-size:.82rem;color:var(--muted);">{{ s.get('impact','') }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Macro Political Risks + Regulatory -->
+<div class="r-grid" style="margin-bottom:1.25rem;">
+  {% set mpr = geo.get('macro_political_risks', []) | selectattr('risk') | list %}
+  {% if mpr %}
+  <div class="r-card">
+    <div class="r-card-head">⚠️ Macro Political Risks</div>
+    <div class="r-card-body">
+      <div style="display:flex;flex-direction:column;gap:.6rem;">
+        {% for r in mpr[:5] %}
+        {% set prob = r.get('probability','Medium') %}
+        <div style="padding:.6rem .75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);">
+          <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.25rem;flex-wrap:wrap;">
+            <span style="font-size:.83rem;font-weight:700;color:var(--navy);">{{ r.get('risk') }}</span>
+            <span style="font-size:.68rem;font-weight:700;padding:.1rem .4rem;border-radius:3px;
+              {% if prob == 'High' %}background:#fee2e2;color:#991b1b;
+              {% elif prob == 'Low' %}background:#d1fae5;color:#065f46;
+              {% else %}background:#fef3c7;color:#92400e;{% endif %}">{{ prob }}</span>
+          </div>
+          {% if r.get('countries') %}
+          <div style="font-size:.75rem;color:var(--muted);margin-bottom:.2rem;">{{ r.get('countries') | join(' · ') }}</div>
+          {% endif %}
+          {% if r.get('fund_impact') %}
+          <div style="font-size:.79rem;color:var(--muted);">{{ r.get('fund_impact') }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% set regs = geo.get('regulatory_risks', []) | selectattr('regulation') | list %}
+  {% if regs %}
+  <div class="r-card">
+    <div class="r-card-head">📜 Regulatory Risks</div>
+    <div class="r-card-body">
+      <div style="display:flex;flex-direction:column;gap:.6rem;">
+        {% for r in regs[:5] %}
+        <div style="padding:.6rem .75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.2rem;flex-wrap:wrap;">
+            <span style="font-size:.83rem;font-weight:700;color:var(--navy);">{{ r.get('regulation') }}</span>
+            <span style="font-size:.72rem;color:var(--muted);">{{ r.get('jurisdiction','') }}</span>
+          </div>
+          {% if r.get('status') %}
+          <div style="font-size:.75rem;color:var(--accent);font-weight:600;margin-bottom:.2rem;">{{ r.get('status') }}</div>
+          {% endif %}
+          {% if r.get('fund_impact') %}
+          <div style="font-size:.79rem;color:var(--muted);">{{ r.get('fund_impact') }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- ── Recent News ────────────────────────────────────────────────── -->
+{% set news_items = [] %}
+{% for n in report.get('recent_news', []) %}
+  {% if (n.get('headline') or '') | lower not in ['', 'unavailable', 'n/a', 'unknown'] %}
+    {% set _ = news_items.append(n) %}
+  {% endif %}
+{% endfor %}
+{% if news_items %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📰 Recent News</div>
+  <div class="r-card-body" style="padding:0;">
+    {% for n in news_items %}
+    {% set sent = n.get('sentiment','Neutral') %}
+    {% set url = n.get('source_url','') %}
+    {% set url_ok = url and url.startswith('http') and (url|lower) not in ['', 'unavailable', 'n/a'] %}
+    <div style="padding:.9rem 1.25rem;border-bottom:1px solid var(--border);display:flex;gap:.85rem;align-items:flex-start;">
+      <span style="flex-shrink:0;margin-top:.2rem;font-size:.95rem;">
+        {% if sent == 'Positive' %}🟢{% elif sent == 'Negative' %}🔴{% else %}⚪{% endif %}
+      </span>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;margin-bottom:.3rem;">
+          {% if url_ok %}
+          <a href="{{ url }}" target="_blank" rel="noopener noreferrer"
+            style="font-size:.88rem;font-weight:600;color:var(--accent);text-decoration:underline;text-underline-offset:2px;word-break:break-word;">
+            {{ n.get('headline') }}
+            <span style="font-size:.72rem;opacity:.7;margin-left:.2rem;">↗</span>
+          </a>
+          {% else %}
+          <span style="font-size:.88rem;font-weight:600;color:var(--navy);word-break:break-word;">{{ n.get('headline') }}</span>
+          {% endif %}
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.3rem;">
+          {% if n.get('date') and (n.get('date')|lower) not in ['', 'unavailable', 'n/a'] %}
+          <span style="font-size:.72rem;color:var(--muted);">{{ n.get('date') }}</span>
+          <span style="color:var(--border);">·</span>
+          {% endif %}
+          <span class="risk-sev sev-{% if sent == 'Positive' %}Low{% elif sent == 'Negative' %}High{% else %}Medium{% endif %}" style="font-size:.65rem;">{{ sent }}</span>
+          {% if url_ok %}
+          <span style="color:var(--border);">·</span>
+          <a href="{{ url }}" target="_blank" rel="noopener noreferrer"
+            style="font-size:.72rem;color:var(--muted);text-decoration:none;white-space:nowrap;">
+            {{ url | replace('https://','') | replace('http://','') | truncate(50, true, '…') }}
+          </a>
+          {% endif %}
+        </div>
+        {% if n.get('summary') and (n.get('summary')|lower) not in ['', 'unavailable', 'n/a'] %}
+        <div style="font-size:.82rem;color:var(--muted);line-height:1.6;">{{ n.get('summary') }}</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Analyst Verdict ─────────────────────────────────────────────── -->
+{% if av %}
+<div class="verdict-box">
+  <div class="verdict-top">
+    <div>
+      <div class="verdict-title">Analyst Verdict</div>
+      {% set cr = av.get('conviction_rating','Hold') %}
+      <div class="verdict-rating {% if cr == 'Strong Buy' %}strong-buy{% elif cr == 'Buy' %}buy{% elif cr == 'Hold' %}hold{% elif cr == 'Underperform' %}underperform{% else %}avoid{% endif %}" style="margin-top:.25rem;">
+        {{ cr }}
+        {% if av.get('conviction_score') is not none %}
+        {% set raw_score2 = av.get('conviction_score') | float %}
+        {% set score2 = (raw_score2 / 10) | round(1) if raw_score2 > 10 else raw_score2 %}
+         · {{ score2 | int if score2 == score2 | int else score2 }}/10{% endif %}
+      </div>
+    </div>
+  </div>
+  {% if av.get('summary') %}
+  <div class="verdict-summary">{{ av.get('summary') }}</div>
+  {% endif %}
+  {% if av.get('why_will_perform_this_way') %}
+  <div class="verdict-why">{{ av.get('why_will_perform_this_way') }}</div>
+  {% endif %}
+  <div class="verdict-pills">
+    {% if av.get('biggest_upside_catalyst') %}
+    <div class="verdict-pill"><strong>Upside Catalyst</strong>{{ av.get('biggest_upside_catalyst') }}</div>
+    {% endif %}
+    {% if av.get('biggest_downside_risk') %}
+    <div class="verdict-pill"><strong>Downside Risk</strong>{{ av.get('biggest_downside_risk') }}</div>
+    {% endif %}
+    {% if av.get('suitable_for') %}
+    <div class="verdict-pill"><strong>Suitable For</strong>{{ av.get('suitable_for') }}</div>
+    {% endif %}
+    {% if av.get('time_horizon_recommendation') %}
+    <div class="verdict-pill"><strong>Time Horizon</strong>{{ av.get('time_horizon_recommendation') }}</div>
+    {% endif %}
+  </div>
+</div>
+
+</div>{# end #reportContent #}
+{% endif %}
+
+{% else %}
+<!-- ── No report yet ──────────────────────────────────────────────── -->
+<div class="gen-box">
+  <div style="font-size:2.5rem;margin-bottom:.5rem;">📊</div>
+  <h3>No research report yet for {{ fund.fund_name }}</h3>
+  <p>
+    Click below to start the research agent. It will search the web for performance history, AUM, strategy, risk factors and analyst forecasts, then generate a detailed 5-year outlook report.
+    <br><em>This typically takes 30–90 seconds.</em>
+  </p>
+  <button class="btn-primary" id="genBtn" onclick="generateReport()">Run Research Agent</button>
+  <div class="gen-progress" id="genProgress">
+    <div class="spin" style="border-color:rgba(0,0,0,.15);border-top-color:var(--navy);display:inline-block;vertical-align:middle;margin-right:.4rem;"></div>
+    <span id="genProgressText">Searching the web and gathering data…</span>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Generation overlay ──────────────────────────────────────────── -->
+<div id="genOverlay">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:1.25rem;width:100%;max-width:640px;padding:0 1.5rem;">
+    <div class="gen-spinner"></div>
+    <div style="text-align:center;">
+      <div class="gen-overlay-title">Researching Fund…</div>
+      <div class="gen-overlay-step" id="overlayStep">Starting up…</div>
+    </div>
+    <div class="gen-progress-track" style="width:100%;">
+      <div class="gen-progress-fill" id="overlayFill"></div>
+    </div>
+
+    <!-- Live agent thoughts terminal -->
+    <div id="thoughtsBox" style="
+      width:100%;max-height:260px;overflow-y:auto;
+      background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.12);
+      border-radius:8px;padding:.75rem 1rem;font-family:monospace;font-size:.76rem;
+      display:flex;flex-direction:column;gap:.3rem;
+    ">
+      <div style="color:rgba(255,255,255,.35);margin-bottom:.25rem;">Agent thinking</div>
+    </div>
+
+    <div style="color:rgba(255,255,255,.35);font-size:.72rem;">This typically takes 60–90 seconds</div>
+  </div>
+</div>
+
+<script>
+const PHASE_STYLE = {
+  phase:  { icon: '◆', color: '#60a5fa' },
+  think:  { icon: '💭', color: '#a78bfa' },
+  search: { icon: '🔍', color: '#34d399' },
+  browse: { icon: '🌐', color: '#fbbf24' },
+  done:   { icon: '✓',  color: '#34d399' },
+};
+
+function renderThoughts(thoughts) {
+  const box = document.getElementById('thoughtsBox');
+  thoughts.forEach(t => {
+    const st = PHASE_STYLE[t.phase] || { icon: '·', color: '#9ca3af' };
+    const line = document.createElement('div');
+    line.style.cssText = `display:flex;gap:.5rem;align-items:flex-start;animation:fadeIn .3s ease;`;
+    line.innerHTML = `
+      <span style="color:${st.color};flex-shrink:0;margin-top:.05rem;">${st.icon}</span>
+      <span style="color:${t.phase === 'think' ? '#c4b5fd' : 'rgba(255,255,255,.8)'};">${escHtml(t.text)}</span>
+    `;
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+
+    // Also update the main step label for phase/think entries
+    if (t.phase === 'phase' || t.phase === 'think') {
+      const stepEl = document.getElementById('overlayStep');
+      if (stepEl) stepEl.textContent = t.text.length > 70 ? t.text.slice(0,70)+'…' : t.text;
+    }
+  });
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function exportPDF() {
+  const btn = document.getElementById('pdfBtn');
+  btn.disabled = true;
+  btn.textContent = 'Preparing PDF…';
+  const el = document.getElementById('reportContent');
+  const fundName = {{ (fund.fund_name ~ ((' (' ~ fund.ticker ~ ')') if fund.ticker else '')) | tojson }};
+  const opt = {
+    margin:       [10, 10, 10, 10],
+    filename:     fundName.replace(/[^a-z0-9]/gi,'_') + '_Research_Report.pdf',
+    image:        { type:'jpeg', quality:0.95 },
+    html2canvas:  { scale:2, useCORS:true, logging:false },
+    jsPDF:        { unit:'mm', format:'a4', orientation:'portrait' },
+    pagebreak:    { mode: ['avoid-all', 'css'] },
+  };
+  html2pdf().set(opt).from(el).save().then(() => {
+    btn.disabled = false;
+    btn.textContent = '⬇ Export PDF';
+  }).catch(e => {
+    btn.disabled = false;
+    btn.textContent = '⬇ Export PDF';
+    alert('PDF export failed: ' + e.message);
+  });
+}
+
+const STEPS = [
+  'Searching performance history…',
+  'Looking up AUM & fund flows…',
+  'Analysing strategy & holdings…',
+  'Checking risk factors…',
+  'Fetching analyst forecasts…',
+  'Scanning latest news…',
+  'Building 5-year outlook model…',
+  'Writing report…',
+];
+
+function showOverlay() {
+  const overlay = document.getElementById('genOverlay');
+  const stepEl  = document.getElementById('overlayStep');
+  const fillEl  = document.getElementById('overlayFill');
+  const box     = document.getElementById('thoughtsBox');
+
+  // Clear previous thoughts (keep the "Agent log" header)
+  if (box) box.innerHTML = '<div style="color:rgba(255,255,255,.35);margin-bottom:.25rem;">Agent thinking</div>';
+  if (stepEl) stepEl.textContent = 'Starting up…';
+  if (fillEl) { fillEl.style.transition = 'none'; fillEl.style.width = '0%'; }
+
+  overlay.classList.add('active');
+  document.body.style.overflow = 'hidden';
+
+  // Slowly advance fill bar as a fallback timer
+  let idx = 0;
+  function advance() {
+    idx++;
+    if (fillEl && idx <= STEPS.length) {
+      fillEl.style.transition = 'width 7s linear';
+      fillEl.style.width = ((idx / STEPS.length) * 100) + '%';
+    }
+  }
+  advance();
+  return setInterval(advance, 7000);
+}
+
+function hideOverlay(timer) {
+  clearInterval(timer);
+  const overlay = document.getElementById('genOverlay');
+  const fillEl  = document.getElementById('overlayFill');
+  // Flash fill to 100% then hide
+  if (fillEl) { fillEl.style.transition = 'width .4s'; fillEl.style.width = '100%'; }
+  setTimeout(() => {
+    overlay.classList.remove('active');
+    document.body.style.overflow = '';
+  }, 400);
+}
+
+async function generateReport() {
+  const btn = document.getElementById('genBtn') || document.getElementById('regenBtn');
+  if (btn) { btn.disabled = true; }
+
+  const timer = showOverlay();
+
+  try {
+    const startRes = await fetch('{{ url_for("api_fund_research_generate", fund_id=fund.id) }}', { method: 'POST' });
+    if (!startRes.ok) {
+      const txt = await startRes.text();
+      throw new Error('Server error ' + startRes.status + ': ' + txt.slice(0, 200));
+    }
+    const startData = await startRes.json();
+    if (startData.error) throw new Error(startData.error);
+    const jobId = startData.job_id;
+
+    const pollUrl = '/api/fund-research/job/' + jobId;
+    let thoughtOffset = 0;
+    while (true) {
+      await new Promise(r => setTimeout(r, 2000));
+      const pollRes = await fetch(`${pollUrl}?offset=${thoughtOffset}`);
+      const poll = await pollRes.json();
+
+      // Render new thoughts
+      if (poll.thoughts && poll.thoughts.length) {
+        renderThoughts(poll.thoughts);
+        thoughtOffset = poll.total || (thoughtOffset + poll.thoughts.length);
+      }
+
+      if (poll.status === 'done') {
+        hideOverlay(timer);
+        setTimeout(() => window.location.reload(), 450);
+        return;
+      }
+      if (poll.status === 'error') throw new Error(poll.error || 'Research failed');
+    }
+  } catch (e) {
+    hideOverlay(timer);
+    setTimeout(() => {
+      alert('Error generating report: ' + e.message);
+      if (btn) { btn.disabled = false; }
+    }, 450);
+  }
+}
+</script>
+{% endblock %}
