@@ -122,7 +122,10 @@ When you have gathered enough evidence (after reviewing results), respond with:
   "done": true
 }}
 
-Focus on events most directly relevant to {fund_name} in {current_month}. Be specific and targeted."""
+Focus on events most directly relevant to {fund_name} ({category}) in {current_month}.
+Use country-specific news sources when available (e.g. for India funds: economictimes.com, livemint.com;
+for China: caixin.com, scmp.com; for Middle East: arabnews.com, reuters.com/ME).
+Be specific and targeted."""
 
     def _log(phase, text):
         if log:
@@ -383,14 +386,63 @@ REQUIRED DATA (mark each as found when you have it):
 [ ] Market sentiment / investor emotion (fear-greed, VIX)
 """.format(year=current_year, y1=current_year-1, y2=current_year-2, y3=current_year-3)
 
-    # Load past learnings for this category
+    def _log(phase, text):
+        if log:
+            log(phase, text)
+
+    # ── Step 0: source selection ──────────────────────────────────────
+    # Ask the LLM to identify the fund's home country/exchange and pick
+    # the best regional data sources BEFORE any searching starts.
+    _log("think", f"Identifying best data sources for {label}…")
+    source_plan = _llm_json(
+        "You are a fund data expert. Given a fund name, ticker and category, "
+        "identify its home country/exchange and list the best websites to find "
+        "performance data, holdings, risk metrics and news for it. "
+        "Different countries have very different financial data sites — be specific.\n\n"
+        "Examples:\n"
+        "- India ETFs → moneycontrol.com, valueresearchonline.com, nseindia.com, bseindia.com, morningstar.in\n"
+        "- Japan ETFs → jpx.co.jp, morningstar.co.jp, tse.or.jp, kabutan.jp\n"
+        "- UK funds  → hl.co.uk, morningstar.co.uk, londonstockexchange.com, trustnet.com, citywire.co.uk\n"
+        "- Germany   → boerse-frankfurt.de, comdirect.de, finanzen.net, morningstar.de\n"
+        "- China     → eastmoney.com, cninfo.com.cn, sse.com.cn, szse.cn, wind.com.cn\n"
+        "- Brazil    → b3.com.br, infomoney.com.br, fundamentus.com.br\n"
+        "- Saudi     → tadawul.com.sa, argaam.com, mubasher.info\n"
+        "- Korea     → krx.co.kr, naver.com/finance, investing.com/kr\n"
+        "- Australia → asx.com.au, morningstar.com.au, intelligentinvestor.com.au\n"
+        "- Canada    → tmxmoney.com, globeandmail.com, morningstar.ca\n"
+        "- US        → etf.com, morningstar.com, finance.yahoo.com, etfdb.com\n"
+        "- Global/Mixed → use the most liquid exchange's local site + morningstar global\n\n"
+        "Return JSON:\n"
+        '{{"home_country":"","home_exchange":"","primary_sites":["site1","site2","site3","site4"],'
+        '"news_sites":["site1","site2"],"reasoning":""}}',
+        f"Fund: {fund_name}\nTicker: {ticker}\nCategory: {category}"
+    )
+    home_country  = source_plan.get("home_country", "")
+    home_exchange = source_plan.get("home_exchange", "")
+    primary_sites = source_plan.get("primary_sites", [])
+    news_sites    = source_plan.get("news_sites", [])
+    site_reasoning = source_plan.get("reasoning", "")
+
+    if primary_sites:
+        sites_str = ", ".join(primary_sites)
+        _log("think", f"Using regional sources for {home_country or 'this fund'}: {sites_str}")
+    else:
+        sites_str = "Morningstar, ETF.com, Yahoo Finance, Bloomberg"
+
+    # ── Load past learnings ───────────────────────────────────────────
     past_memories = _load_memories(category)
 
     system_prompt = f"""You are a meticulous fund research analyst collecting data for {label} ({category}).
+Home country / exchange: {home_country} / {home_exchange}
 
 Your task: run web searches to gather ALL the data points in the checklist below.
-Search smartly — adapt queries based on what results you find. Use Morningstar, ETF.com,
-Yahoo Finance, Bloomberg, Reuters, and fund provider sites.
+
+REGIONAL DATA SOURCES — use these first, they are the most accurate for this fund:
+  Primary: {sites_str}
+  News:    {", ".join(news_sites) if news_sites else "local financial news + Reuters"}
+
+Do NOT default to US-only sites (Morningstar.com, ETF.com) for non-US funds.
+Instead use the country-specific sources listed above.
 
 {CHECKLIST}
 
@@ -420,15 +472,12 @@ When ALL critical items are found (or after enough rounds), set done=true:
 
 Be precise. Search for exact numbers. If a well-known fund, you may already know some figures — still verify with a search."""
 
-    def _log(phase, text):
-        if log:
-            log(phase, text)
-
     messages = [{"role": "system", "content": system_prompt}]
     messages.append({
         "role": "user",
         "content": (
-            f"Start collecting data for {label} as of {current_month}. "
+            f"Start collecting data for {label} ({home_country}) as of {current_month}. "
+            f"Use {sites_str} as your primary sources. "
             f"What is the most important thing to search for first to get accurate performance numbers?"
         )
     })
@@ -514,6 +563,12 @@ Be precise. Search for exact numbers. If a well-known fund, you may already know
 
     # Save learnings to memory in background thread
     import threading
+    # Inject source plan into messages so _save_memories can extract site learnings
+    if primary_sites:
+        messages.append({
+            "role": "system",
+            "content": f"[META] home_country={home_country} primary_sites={primary_sites} news_sites={news_sites}"
+        })
     threading.Thread(
         target=_save_memories,
         args=(category, ticker, search_history, browsed_pages, messages),
