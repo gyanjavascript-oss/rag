@@ -515,6 +515,18 @@ def init_db():
         cur.execute("""
             ALTER TABLE fund_watchlist ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP DEFAULT NULL
         """)
+        # Admin-managed quick-pick fund list
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fund_quickpick (
+                id         SERIAL PRIMARY KEY,
+                fund_name  TEXT NOT NULL,
+                ticker     TEXT NOT NULL DEFAULT '',
+                category   TEXT NOT NULL DEFAULT 'ETF',
+                exchange   TEXT NOT NULL DEFAULT '',
+                country    TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
         # Seed marketplace agents
         _seed_marketplace_agents(cur)

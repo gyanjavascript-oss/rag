@@ -982,6 +982,53 @@
   </div>
 </div>
 
+<!-- ── Agent Thinking Log ─────────────────────────────────────────── -->
+{% set thoughts = report.get('_agent_thoughts', []) %}
+{% if thoughts %}
+<div class="r-card" style="margin-bottom:1.25rem;" id="agentThinkingCard">
+  <div class="r-card-head" style="cursor:pointer;user-select:none;" onclick="toggleThinking()">
+    <span>🧠 Agent Thinking</span>
+    <span style="font-size:.75rem;color:var(--muted);font-weight:400;margin-left:.5rem;">{{ thoughts|length }} steps</span>
+    <span style="margin-left:auto;font-size:.8rem;color:var(--muted);" id="thinkToggleIcon">▼ Show</span>
+  </div>
+  <div id="thinkingBody" style="display:none;">
+    <div style="
+      margin:.25rem 0 0;
+      background:#0f172a;border-radius:0 0 var(--radius) var(--radius);
+      padding:.85rem 1.1rem;font-family:monospace;font-size:.77rem;
+      max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:.3rem;
+    ">
+      {% for t in thoughts %}
+      {% set phase = t.get('phase','') %}
+      <div style="display:flex;gap:.55rem;align-items:flex-start;">
+        <span style="flex-shrink:0;
+          {% if phase == 'phase' %}color:#60a5fa;
+          {% elif phase == 'think' %}color:#a78bfa;
+          {% elif phase == 'search' %}color:#34d399;
+          {% elif phase == 'browse' %}color:#fbbf24;
+          {% elif phase == 'done' %}color:#34d399;
+          {% else %}color:#6b7280;{% endif %}">
+          {% if phase == 'phase' %}◆{% elif phase == 'think' %}💭{% elif phase == 'search' %}🔍{% elif phase == 'browse' %}🌐{% elif phase == 'done' %}✓{% else %}·{% endif %}
+        </span>
+        <span style="
+          {% if phase == 'think' %}color:#c4b5fd;{% else %}color:rgba(255,255,255,.8);{% endif %}
+          line-height:1.55;word-break:break-word;">{{ t.get('text','') }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+<script>
+function toggleThinking() {
+  const body = document.getElementById('thinkingBody');
+  const icon = document.getElementById('thinkToggleIcon');
+  const visible = body.style.display !== 'none';
+  body.style.display = visible ? 'none' : 'block';
+  icon.textContent = visible ? '▼ Show' : '▲ Hide';
+}
+</script>
+{% endif %}
+
 </div>{# end #reportContent #}
 {% endif %}
 

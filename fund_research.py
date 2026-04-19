@@ -209,6 +209,9 @@ def _gather_evidence(fund_name: str, ticker: str = "", category: str = "", log=N
         f"{label} latest update {current_year}",
         f"{ticker or fund_name} fund flows inflows outflows {current_year}",
         f"{label} SEC filing regulatory news {current_year}",
+        f"{ticker or fund_name} performance news {current_year}",
+        f"{label} investor outlook analyst rating {current_year}",
+        f"{ticker or fund_name} ETF news today",
     ]
 
     def _log(phase, text):
@@ -345,6 +348,7 @@ CRITICAL RULES:
 3. notable_periods must contain real events (e.g. "2022 Bear Market", "COVID Crash 2020") with actual return figures — do not use placeholder text.
 4. top_holdings and sector_allocation must list real holdings/sectors with approximate weights if known.
 5. For key_milestones "why" fields: write 2-4 detailed sentences. Do NOT use vague phrases like "economic stabilization" or "market maturity" alone — always explain the specific mechanism: which policy, which sector dynamic, which regulatory change, which macroeconomic force, and why it applies to THIS fund in THAT year specifically.
+6. recent_news MUST contain AT LEAST 5 distinct news items. Draw from the news evidence provided AND from your training knowledge of recent events affecting this fund. Each item must have a real or realistic headline, a date (within the last 6 months), a 1-2 sentence summary, sentiment, and a source_url (use "" if unknown). Do NOT leave items blank.
 
 Return this exact JSON structure:
 {{
@@ -429,6 +433,34 @@ Return this exact JSON structure:
     ]
   }},
   "recent_news": [
+    {{
+      "headline": "",
+      "date": "",
+      "summary": "",
+      "sentiment": "Positive|Neutral|Negative",
+      "source_url": ""
+    }},
+    {{
+      "headline": "",
+      "date": "",
+      "summary": "",
+      "sentiment": "Positive|Neutral|Negative",
+      "source_url": ""
+    }},
+    {{
+      "headline": "",
+      "date": "",
+      "summary": "",
+      "sentiment": "Positive|Neutral|Negative",
+      "source_url": ""
+    }},
+    {{
+      "headline": "",
+      "date": "",
+      "summary": "",
+      "sentiment": "Positive|Neutral|Negative",
+      "source_url": ""
+    }},
     {{
       "headline": "",
       "date": "",
@@ -527,6 +559,29 @@ Return this exact JSON structure:
         put_db(conn2)
 
     return report
+
+
+def save_thoughts(fund_id: int, thoughts: list) -> None:
+    """Append agent thoughts log to the saved report JSON."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT report_json FROM fund_research_reports WHERE fund_id=?", (fund_id,)
+        ).fetchone()
+        if not row:
+            return
+        try:
+            rj = json.loads(row["report_json"])
+        except Exception:
+            rj = {}
+        rj["_agent_thoughts"] = thoughts
+        conn.execute(
+            "UPDATE fund_research_reports SET report_json=? WHERE fund_id=?",
+            (json.dumps(rj), fund_id),
+        )
+        conn.commit()
+    finally:
+        put_db(conn)
 
 
 def get_latest_report(fund_id: int):

@@ -73,7 +73,12 @@
       </div>
       <!-- Edit button -->
       <button class="btn-outline btn-sm" style="flex-shrink:0;"
-        onclick="openEdit({{ f.id }}, {{ f.fund_name|tojson }}, {{ (f.ticker or '')|tojson }}, {{ f.category|tojson }}, {{ (f.notes or '')|tojson }})">
+        data-edit-id="{{ f.id }}"
+        data-edit-name="{{ f.fund_name | e }}"
+        data-edit-ticker="{{ (f.ticker or '') | e }}"
+        data-edit-category="{{ f.category | e }}"
+        data-edit-notes="{{ (f.notes or '') | e }}"
+        onclick="openEdit(this)">
         ✎ Edit
       </button>
     </div>
@@ -153,7 +158,14 @@
 
       <!-- Quick-pick popular funds -->
       <div class="field-group">
-        <label>Quick Pick <span style="font-weight:400;color:var(--muted);font-size:.78rem;">— select to auto-fill</span></label>
+        <label style="display:flex;align-items:center;gap:.5rem;">
+          Quick Pick
+          <span style="font-weight:400;color:var(--muted);font-size:.78rem;">— select to auto-fill</span>
+          {% if is_admin %}
+          <button type="button" class="btn-outline btn-sm" style="margin-left:auto;font-size:.72rem;padding:.15rem .55rem;"
+            onclick="document.getElementById('qpManageModal').style.display='flex'">⚙ Manage List</button>
+          {% endif %}
+        </label>
         <div style="position:relative;">
           <input id="fundSearch" type="text" placeholder="Search funds by name or ticker…" autocomplete="off"
             style="width:100%;" oninput="filterFunds(this.value)" onfocus="filterFunds(this.value)">
@@ -495,13 +507,148 @@ document.addEventListener('click', e => {
 </div>
 
 <script>
-function openEdit(id, name, ticker, category, notes) {
-  document.getElementById('editForm').action = '/fund-research/' + id + '/edit';
-  document.getElementById('edit_fund_name').value = name;
-  document.getElementById('edit_ticker').value = ticker;
-  document.getElementById('edit_category').value = category;
-  document.getElementById('edit_notes').value = notes;
+function openEdit(btn) {
+  const d = btn.dataset;
+  document.getElementById('editForm').action = '/fund-research/' + d.editId + '/edit';
+  document.getElementById('edit_fund_name').value = d.editName;
+  document.getElementById('edit_ticker').value = d.editTicker;
+  document.getElementById('edit_category').value = d.editCategory;
+  document.getElementById('edit_notes').value = d.editNotes;
   document.getElementById('editModal').style.display = 'flex';
 }
 </script>
+
+<!-- Quick-pick Management Modal (admin only) -->
+{% if is_admin %}
+<div id="qpManageModal" class="modal-overlay" style="display:none;">
+  <div class="modal" style="width:680px;max-height:90vh;display:flex;flex-direction:column;">
+    <div class="modal-header" style="flex-shrink:0;">
+      <h3>⚙ Manage Quick-Pick Fund List</h3>
+      <button class="modal-close" onclick="document.getElementById('qpManageModal').style.display='none'">✕</button>
+    </div>
+
+    <div style="padding:1rem 1.5rem;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);">
+      <div style="font-size:.8rem;font-weight:600;color:var(--muted);margin-bottom:.6rem;text-transform:uppercase;letter-spacing:.04em;">Add to list</div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:.5rem;">
+        <input id="qp_name" type="text" placeholder="Fund Name *" style="font-size:.83rem;">
+        <input id="qp_ticker" type="text" placeholder="Ticker *" style="text-transform:uppercase;font-size:.83rem;">
+        <input id="qp_country" type="text" placeholder="Country" style="font-size:.83rem;">
+        <select id="qp_category" style="font-size:.83rem;padding:.5rem .6rem;border:1px solid var(--border);border-radius:var(--radius);">
+          {% for cat in ['ETF','Equity','Fixed Income','Hedge Fund','Private Equity','Real Estate','Multi-Asset','Commodity','Crypto','Other'] %}
+          <option>{{ cat }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr auto;gap:.5rem;margin-top:.5rem;">
+        <input id="qp_exchange" type="text" placeholder="Exchange (e.g. NYSE Arca)" style="font-size:.83rem;">
+        <button class="btn-primary btn-sm" onclick="qpAdd()">+ Add</button>
+      </div>
+      <div id="qpMsg" style="font-size:.78rem;margin-top:.4rem;color:#dc2626;display:none;"></div>
+    </div>
+
+    <div style="overflow-y:auto;flex:1;">
+      <table style="width:100%;border-collapse:collapse;font-size:.82rem;">
+        <thead>
+          <tr style="background:var(--bg2);position:sticky;top:0;">
+            <th style="text-align:left;padding:.5rem .75rem;font-weight:600;color:var(--muted);font-size:.72rem;text-transform:uppercase;border-bottom:1px solid var(--border);">Fund</th>
+            <th style="text-align:left;padding:.5rem .5rem;font-weight:600;color:var(--muted);font-size:.72rem;text-transform:uppercase;border-bottom:1px solid var(--border);">Ticker</th>
+            <th style="text-align:left;padding:.5rem .5rem;font-weight:600;color:var(--muted);font-size:.72rem;text-transform:uppercase;border-bottom:1px solid var(--border);">Country</th>
+            <th style="text-align:left;padding:.5rem .5rem;font-weight:600;color:var(--muted);font-size:.72rem;text-transform:uppercase;border-bottom:1px solid var(--border);">Cat</th>
+            <th style="border-bottom:1px solid var(--border);"></th>
+          </tr>
+        </thead>
+        <tbody id="qpTableBody"></tbody>
+      </table>
+      <div id="qpEmpty" style="text-align:center;padding:2rem;color:var(--muted);font-size:.85rem;display:none;">No custom funds yet. Add one above.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let QP_DB = {{ db_quickpicks | tojson }};
+
+function escH(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function qpRender() {
+  const tbody = document.getElementById('qpTableBody');
+  const empty = document.getElementById('qpEmpty');
+  if (!QP_DB.length) { tbody.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display='none';
+  const CATS = ['ETF','Equity','Fixed Income','Hedge Fund','Private Equity','Real Estate','Multi-Asset','Commodity','Crypto','Other'];
+  tbody.innerHTML = QP_DB.map(f => `
+    <tr data-id="${f.id}" style="border-bottom:1px solid var(--border);">
+      <td style="padding:.45rem .75rem;color:var(--navy);font-weight:500;">${escH(f.fund_name)}</td>
+      <td style="padding:.45rem .5rem;font-weight:700;color:var(--accent);">${escH(f.ticker)}</td>
+      <td style="padding:.45rem .5rem;color:var(--muted);">${escH(f.country||'—')}</td>
+      <td style="padding:.45rem .5rem;color:var(--muted);">${escH(f.category||'')}</td>
+      <td style="padding:.45rem .5rem;white-space:nowrap;">
+        <button class="btn-outline btn-sm" style="font-size:.7rem;" onclick="qpStartEdit(${f.id})">✎ Edit</button>
+        <button class="btn-danger-sm" style="font-size:.7rem;margin-left:.3rem;" onclick="qpDelete(${f.id})">✕</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function qpAdd() {
+  const name=document.getElementById('qp_name').value.trim();
+  const ticker=document.getElementById('qp_ticker').value.trim().toUpperCase();
+  const msg=document.getElementById('qpMsg');
+  if(!name||!ticker){msg.textContent='Name and ticker required.';msg.style.display='block';return;}
+  msg.style.display='none';
+  const res=await fetch('/api/fund-quickpick/add',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({fund_name:name,ticker,category:document.getElementById('qp_category').value,
+      exchange:document.getElementById('qp_exchange').value.trim(),country:document.getElementById('qp_country').value.trim()})});
+  const d=await res.json();
+  if(d.error){msg.textContent=d.error;msg.style.display='block';return;}
+  QP_DB=await fetch('/api/fund-quickpick').then(r=>r.json());
+  const nf=QP_DB[QP_DB.length-1];
+  if(nf)FUNDS.push({name:nf.fund_name,ticker:nf.ticker,cat:nf.category,exchange:nf.exchange||'',country:nf.country||'',_db:true,_id:nf.id});
+  qpRender();
+  ['qp_name','qp_ticker','qp_exchange','qp_country'].forEach(id=>document.getElementById(id).value='');
+}
+
+function qpStartEdit(id) {
+  const f=QP_DB.find(x=>x.id===id); if(!f)return;
+  const CATS=['ETF','Equity','Fixed Income','Hedge Fund','Private Equity','Real Estate','Multi-Asset','Commodity','Crypto','Other'];
+  const row=document.querySelector(`#qpTableBody tr[data-id="${id}"]`);
+  row.innerHTML=`
+    <td style="padding:.3rem .5rem;"><input class="qp-e-name" value="${escH(f.fund_name)}" style="width:100%;font-size:.82rem;"></td>
+    <td style="padding:.3rem .35rem;"><input class="qp-e-ticker" value="${escH(f.ticker)}" style="width:80px;text-transform:uppercase;font-size:.82rem;"></td>
+    <td style="padding:.3rem .35rem;"><input class="qp-e-country" value="${escH(f.country||'')}" style="width:90px;font-size:.82rem;"></td>
+    <td style="padding:.3rem .35rem;"><select class="qp-e-cat" style="font-size:.8rem;padding:.25rem;border:1px solid var(--border);border-radius:4px;">
+      ${CATS.map(c=>`<option${c===f.category?' selected':''}>${c}</option>`).join('')}</select></td>
+    <td style="padding:.3rem .35rem;white-space:nowrap;">
+      <button class="btn-primary btn-sm" style="font-size:.7rem;" onclick="qpSaveEdit(${id},this)">Save</button>
+      <button class="btn-outline btn-sm" style="font-size:.7rem;margin-left:.25rem;" onclick="qpRender()">✕</button>
+    </td>`;
+}
+
+async function qpSaveEdit(id,btn){
+  const row=btn.closest('tr');
+  const data={fund_name:row.querySelector('.qp-e-name').value.trim(),
+    ticker:row.querySelector('.qp-e-ticker').value.trim().toUpperCase(),
+    country:row.querySelector('.qp-e-country').value.trim(),
+    category:row.querySelector('.qp-e-cat').value,exchange:''};
+  await fetch(`/api/fund-quickpick/${id}/edit`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  QP_DB=await fetch('/api/fund-quickpick').then(r=>r.json());
+  qpRender();
+}
+
+async function qpDelete(id){
+  if(!confirm('Remove from quick-pick list?'))return;
+  await fetch(`/api/fund-quickpick/${id}/delete`,{method:'POST'});
+  QP_DB=QP_DB.filter(f=>f.id!==id);
+  FUNDS=FUNDS.filter(f=>!f._db||f._id!==id);
+  qpRender();
+}
+
+// Merge DB funds into search list on load
+QP_DB.forEach(f=>FUNDS.push({name:f.fund_name,ticker:f.ticker,cat:f.category,exchange:f.exchange||'',country:f.country||'',_db:true,_id:f.id}));
+
+// Open renders table
+document.addEventListener('click',e=>{
+  if(e.target.closest('[onclick*="qpManageModal"]'))qpRender();
+  if(e.target.id==='qpManageModal')e.target.style.display='none';
+});
+</script>
+{% endif %}
 {% endblock %}

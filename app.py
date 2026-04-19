@@ -1935,6 +1935,61 @@ def api_plugin_staleness_orchestrator():
 
 # ── Fund Research (Risk Assessment Agent) ─────────────────────────────────────
 
+@app.route("/api/fund-quickpick", methods=["GET"])
+@login_required
+def api_fund_quickpick_list():
+    conn = db.get_db()
+    rows = conn.execute("SELECT * FROM fund_quickpick ORDER BY fund_name").fetchall()
+    db.put_db(conn)
+    return jsonify([dict(r) for r in rows])
+
+@app.route("/api/fund-quickpick/add", methods=["POST"])
+@login_required
+def api_fund_quickpick_add():
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+    data = request.get_json() or {}
+    name = data.get("fund_name", "").strip()
+    ticker = data.get("ticker", "").strip().upper()
+    if not name or not ticker:
+        return jsonify({"error": "Name and ticker required"}), 400
+    conn = db.get_db()
+    conn.execute(
+        "INSERT INTO fund_quickpick (fund_name, ticker, category, exchange, country) VALUES (?,?,?,?,?)",
+        (name, ticker, data.get("category","ETF"), data.get("exchange",""), data.get("country","")),
+    )
+    conn.commit()
+    db.put_db(conn)
+    return jsonify({"ok": True})
+
+@app.route("/api/fund-quickpick/<int:qid>/edit", methods=["POST"])
+@login_required
+def api_fund_quickpick_edit(qid):
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+    data = request.get_json() or {}
+    conn = db.get_db()
+    conn.execute(
+        "UPDATE fund_quickpick SET fund_name=?, ticker=?, category=?, exchange=?, country=? WHERE id=?",
+        (data.get("fund_name",""), data.get("ticker","").upper(),
+         data.get("category","ETF"), data.get("exchange",""), data.get("country",""), qid),
+    )
+    conn.commit()
+    db.put_db(conn)
+    return jsonify({"ok": True})
+
+@app.route("/api/fund-quickpick/<int:qid>/delete", methods=["POST"])
+@login_required
+def api_fund_quickpick_delete(qid):
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+    conn = db.get_db()
+    conn.execute("DELETE FROM fund_quickpick WHERE id=?", (qid,))
+    conn.commit()
+    db.put_db(conn)
+    return jsonify({"ok": True})
+
+
 @app.route("/fund-research")
 @login_required
 def fund_research():
@@ -1964,9 +2019,15 @@ def fund_research():
         f["conviction"] = av.get("conviction_rating", "")
         funds.append(f)
 
+    u = _current_user()
+    qp_conn = db.get_db()
+    qp_rows = qp_conn.execute("SELECT * FROM fund_quickpick ORDER BY fund_name").fetchall()
+    db.put_db(qp_conn)
     return render_template("fund_research.html",
-                           user=_current_user(),
+                           user=u,
                            funds=funds,
+                           is_admin=(u.get("role") == "admin"),
+                           db_quickpicks=[dict(r) for r in qp_rows],
                            fund_name=os.getenv("FUND_NAME", "DDQ Platform"))
 
 
@@ -2059,6 +2120,8 @@ def api_fund_research_generate(fund_id):
     def _run():
         try:
             fr.generate_report(fund_id, log=_log)
+            # Persist thoughts into the saved report so the page can show them
+            fr.save_thoughts(fund_id, _fr_jobs[job_id]["thoughts"])
             _fr_jobs[job_id]["status"] = "done"
         except Exception as e:
             import traceback
