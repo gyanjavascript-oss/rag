@@ -390,59 +390,21 @@ REQUIRED DATA (mark each as found when you have it):
         if log:
             log(phase, text)
 
-    # ── Step 0: source selection ──────────────────────────────────────
-    # Ask the LLM to identify the fund's home country/exchange and pick
-    # the best regional data sources BEFORE any searching starts.
-    _log("think", f"Identifying best data sources for {label}…")
-    source_plan = _llm_json(
-        "You are a fund data expert. Given a fund name, ticker and category, "
-        "identify its home country/exchange and list the best websites to find "
-        "performance data, holdings, risk metrics and news for it. "
-        "Different countries have very different financial data sites — be specific.\n\n"
-        "Examples:\n"
-        "- India ETFs → moneycontrol.com, valueresearchonline.com, nseindia.com, bseindia.com, morningstar.in\n"
-        "- Japan ETFs → jpx.co.jp, morningstar.co.jp, tse.or.jp, kabutan.jp\n"
-        "- UK funds  → hl.co.uk, morningstar.co.uk, londonstockexchange.com, trustnet.com, citywire.co.uk\n"
-        "- Germany   → boerse-frankfurt.de, comdirect.de, finanzen.net, morningstar.de\n"
-        "- China     → eastmoney.com, cninfo.com.cn, sse.com.cn, szse.cn, wind.com.cn\n"
-        "- Brazil    → b3.com.br, infomoney.com.br, fundamentus.com.br\n"
-        "- Saudi     → tadawul.com.sa, argaam.com, mubasher.info\n"
-        "- Korea     → krx.co.kr, naver.com/finance, investing.com/kr\n"
-        "- Australia → asx.com.au, morningstar.com.au, intelligentinvestor.com.au\n"
-        "- Canada    → tmxmoney.com, globeandmail.com, morningstar.ca\n"
-        "- US        → etf.com, morningstar.com, finance.yahoo.com, etfdb.com\n"
-        "- Global/Mixed → use the most liquid exchange's local site + morningstar global\n\n"
-        "Return JSON:\n"
-        '{{"home_country":"","home_exchange":"","primary_sites":["site1","site2","site3","site4"],'
-        '"news_sites":["site1","site2"],"reasoning":""}}',
-        f"Fund: {fund_name}\nTicker: {ticker}\nCategory: {category}"
-    )
-    home_country  = source_plan.get("home_country", "")
-    home_exchange = source_plan.get("home_exchange", "")
-    primary_sites = source_plan.get("primary_sites", [])
-    news_sites    = source_plan.get("news_sites", [])
-    site_reasoning = source_plan.get("reasoning", "")
-
-    if primary_sites:
-        sites_str = ", ".join(primary_sites)
-        _log("think", f"Using regional sources for {home_country or 'this fund'}: {sites_str}")
-    else:
-        sites_str = "Morningstar, ETF.com, Yahoo Finance, Bloomberg"
-
     # ── Load past learnings ───────────────────────────────────────────
     past_memories = _load_memories(category)
 
     system_prompt = f"""You are a meticulous fund research analyst collecting data for {label} ({category}).
-Home country / exchange: {home_country} / {home_exchange}
 
 Your task: run web searches to gather ALL the data points in the checklist below.
 
-REGIONAL DATA SOURCES — use these first, they are the most accurate for this fund:
-  Primary: {sites_str}
-  News:    {", ".join(news_sites) if news_sites else "local financial news + Reuters"}
-
-Do NOT default to US-only sites (Morningstar.com, ETF.com) for non-US funds.
-Instead use the country-specific sources listed above.
+IMPORTANT — SOURCE STRATEGY:
+1. Your FIRST action must be to search for the best data sources for this specific fund.
+   Search: "best financial data sites for [fund country] [fund type] performance data"
+   From the results, identify which sites are most authoritative for THIS fund's country/exchange.
+2. Use those discovered sites for all subsequent searches — do NOT default to US-only sites
+   (Morningstar.com / ETF.com) unless the fund is US-listed.
+3. As you browse pages, note any NEW useful sites you discover and prefer them in future rounds.
+4. Report discovered sites in "new_sites_found" each round.
 
 {CHECKLIST}
 
@@ -455,9 +417,10 @@ Start with PROVEN QUERIES from past sessions if available — they have already 
 At each step respond with JSON:
 {{
   "reasoning": "what I found and what I still need",
-  "found_items": ["list of checklist items now confirmed found"],
+  "found_items": ["checklist items confirmed found this round"],
+  "new_sites_found": ["any new useful domain discovered this round"],
   "search_query": "the exact query to run next",
-  "query_type": "performance|holdings|risk|news|sentiment|flows|other",
+  "query_type": "performance|holdings|risk|news|sentiment|flows|sources|other",
   "done": false
 }}
 
@@ -465,22 +428,26 @@ When ALL critical items are found (or after enough rounds), set done=true:
 {{
   "reasoning": "summary of all data collected",
   "found_items": [],
+  "new_sites_found": [],
   "search_query": "",
   "query_type": "other",
   "done": true
 }}
 
-Be precise. Search for exact numbers. If a well-known fund, you may already know some figures — still verify with a search."""
+Be precise. Search for exact numbers."""
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.append({
         "role": "user",
         "content": (
-            f"Start collecting data for {label} ({home_country}) as of {current_month}. "
-            f"Use {sites_str} as your primary sources. "
-            f"What is the most important thing to search for first to get accurate performance numbers?"
+            f"Start by finding the best data sources for {label} ({category}) as of {current_month}. "
+            f"What country/exchange is this fund from, and what sites should you use to research it?"
         )
     })
+
+    # Track discovered sites across rounds — grows dynamically
+    discovered_sites = []
+    home_country = ""
 
     all_results = []
     news_results = []
@@ -510,6 +477,22 @@ Be precise. Search for exact numbers. If a well-known fund, you may already know
         if reasoning:
             _log("think", reasoning)
 
+        # Collect newly discovered sites
+        new_sites = action.get("new_sites_found", [])
+        for s in new_sites:
+            s = s.strip().lower().replace("https://", "").replace("http://", "").split("/")[0]
+            if s and s not in discovered_sites:
+                discovered_sites.append(s)
+                _log("think", f"Discovered new source: {s}")
+
+        # Extract home country from first round if mentioned
+        if not home_country and reasoning:
+            for line in reasoning.lower().split("."):
+                for kw in ["listed on", "based in", "home country:", "exchange:", "country:"]:
+                    if kw in line:
+                        home_country = line.split(kw)[-1].strip().split()[0].title()
+                        break
+
         if action.get("done"):
             _log("done", f"Research agent complete after {round_num} rounds.")
             break
@@ -526,14 +509,29 @@ Be precise. Search for exact numbers. If a well-known fund, you may already know
 
         is_news = q_type in ("news", "sentiment")
         for r in results:
+            # Track any new domains from search results too
+            try:
+                from urllib.parse import urlparse
+                d = urlparse(r.get("url", "")).netloc.lower()
+                if d and d not in discovered_sites and "google" not in d:
+                    discovered_sites.append(d)
+            except Exception:
+                pass
             if is_news:
                 r["_news"] = True
                 news_results.append(r)
             else:
                 all_results.append(r)
 
-        # Browse top non-Google URL
-        top_url = next(
+        # Browse top non-Google URL — prefer discovered sites if present
+        preferred_url = next(
+            (r.get("url", "") for r in results
+             if r.get("url", "").startswith("http")
+             and any(s in r.get("url", "") for s in discovered_sites)
+             and "google" not in r.get("url", "")),
+            ""
+        )
+        top_url = preferred_url or next(
             (r.get("url", "") for r in results
              if r.get("url", "").startswith("http") and "google" not in r.get("url", "")),
             ""
@@ -548,7 +546,7 @@ Be precise. Search for exact numbers. If a well-known fund, you may already know
                 browsed_pages.append(f"{tag} SOURCE: {top_url}\n{page_text[:2500]}")
             time.sleep(0.3)
 
-        # Feed results back to agent
+        # Feed results back to agent — include running list of discovered sources
         snippets = []
         for r in results:
             snippets.append(
@@ -557,17 +555,19 @@ Be precise. Search for exact numbers. If a well-known fund, you may already know
         observation = f"SEARCH RESULTS FOR: {query}\n\n" + "\n\n".join(snippets[:5])
         if page_text and not page_text.startswith("[Browse failed"):
             observation += f"\n\nFULL PAGE ({top_url}):\n{page_text[:1200]}"
+        if discovered_sites:
+            observation += f"\n\nDISCOVERED SOURCES SO FAR: {', '.join(discovered_sites[-10:])}"
+            observation += "\nPrefer these sites in your next search query where applicable."
 
-        observation += "\n\nWhat checklist items are now found? What should you search for next?"
+        observation += "\n\nWhat checklist items are now found? What new sites did you discover? What should you search next?"
         messages.append({"role": "user", "content": observation})
 
     # Save learnings to memory in background thread
     import threading
-    # Inject source plan into messages so _save_memories can extract site learnings
-    if primary_sites:
+    if discovered_sites:
         messages.append({
             "role": "system",
-            "content": f"[META] home_country={home_country} primary_sites={primary_sites} news_sites={news_sites}"
+            "content": f"[META] home_country={home_country} discovered_sites={discovered_sites}"
         })
     threading.Thread(
         target=_save_memories,
