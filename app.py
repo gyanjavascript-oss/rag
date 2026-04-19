@@ -1935,6 +1935,31 @@ def api_plugin_staleness_orchestrator():
 
 # ── Fund Research (Risk Assessment Agent) ─────────────────────────────────────
 
+@app.route("/api/fund-research/memory", methods=["GET"])
+@login_required
+def api_fund_research_memory():
+    """Admin: view what the research agent has learned."""
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+    conn = db.get_db()
+    rows = conn.execute(
+        "SELECT * FROM fund_research_memory ORDER BY hits DESC, updated_at DESC LIMIT 200"
+    ).fetchall()
+    db.put_db(conn)
+    return jsonify([dict(r) for r in rows])
+
+@app.route("/api/fund-research/memory/<int:mid>/delete", methods=["POST"])
+@login_required
+def api_fund_research_memory_delete(mid):
+    """Admin: delete a learned memory entry."""
+    if _current_user().get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+    conn = db.get_db()
+    conn.execute("DELETE FROM fund_research_memory WHERE id=%s", (mid,))
+    conn.commit()
+    db.put_db(conn)
+    return jsonify({"ok": True})
+
 @app.route("/api/fund-quickpick", methods=["GET"])
 @login_required
 def api_fund_quickpick_list():

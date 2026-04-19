@@ -527,6 +527,18 @@ def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        # Research agent self-training memory
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fund_research_memory (
+                id           SERIAL PRIMARY KEY,
+                category     TEXT NOT NULL DEFAULT '',
+                memory_type  TEXT NOT NULL DEFAULT 'strategy',
+                content      JSONB NOT NULL DEFAULT '{}',
+                hits         INTEGER DEFAULT 1,
+                created_at   TIMESTAMP DEFAULT NOW(),
+                updated_at   TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
         # Seed marketplace agents
         _seed_marketplace_agents(cur)

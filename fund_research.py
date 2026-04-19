@@ -185,6 +185,162 @@ Focus on events most directly relevant to {fund_name} in {current_month}. Be spe
     return evidence
 
 
+# ── Agent self-training memory ────────────────────────────────────────────────
+
+def _load_memories(category: str) -> str:
+    """
+    Load past learned strategies for this fund category from the DB.
+    Returns a formatted string to inject into the agent's system prompt.
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT memory_type, content, hits FROM fund_research_memory
+               WHERE category = %s OR category = ''
+               ORDER BY hits DESC, updated_at DESC LIMIT 30""",
+            (category,)
+        ).fetchall()
+    finally:
+        put_db(conn)
+
+    if not rows:
+        return ""
+
+    lines = ["LEARNED FROM PAST RESEARCH SESSIONS (apply these first):"]
+    for r in rows:
+        try:
+            c = json.loads(r["content"]) if isinstance(r["content"], str) else r["content"]
+        except Exception:
+            continue
+        mtype = r["memory_type"]
+        hits = r.get("hits", 1)
+        if mtype == "query":
+            lines.append(
+                f"  ✓ PROVEN QUERY (used {hits}x): \"{c.get('query_template','')}\" "
+                f"→ finds: {c.get('what_it_finds','')} "
+                f"[quality: {c.get('quality','medium')}]"
+            )
+        elif mtype == "source":
+            lines.append(
+                f"  ✓ RELIABLE SOURCE: {c.get('domain','')} "
+                f"→ good for: {', '.join(c.get('reliable_for',[]))}"
+            )
+        elif mtype == "strategy":
+            lines.append(f"  ✓ STRATEGY: {c.get('insight','')}")
+    return "\n".join(lines)
+
+
+def _save_memories(category: str, ticker: str, search_history: list,
+                   browsed_pages: list, messages: list) -> None:
+    """
+    After a research loop, ask LLM to extract what worked and save learnings to DB.
+    Runs in background — does not block report generation.
+    """
+    if not search_history:
+        return
+
+    # Build a compact session summary for the LLM
+    domains_hit = []
+    for page in browsed_pages:
+        for line in page.split("\n"):
+            if line.startswith("[RESEARCH] SOURCE:") or line.startswith("SOURCE:"):
+                url = line.split("SOURCE:")[-1].strip()
+                try:
+                    from urllib.parse import urlparse
+                    d = urlparse(url).netloc
+                    if d and d not in domains_hit:
+                        domains_hit.append(d)
+                except Exception:
+                    pass
+
+    session_summary = (
+        f"Fund category: {category} | Ticker: {ticker}\n"
+        f"Queries run ({len(search_history)}): {json.dumps(search_history)}\n"
+        f"Domains browsed: {json.dumps(domains_hit)}\n"
+    )
+    # Include only last few agent turns to infer what found data
+    agent_turns = [m for m in messages if m.get("role") == "assistant"][-4:]
+    session_summary += "Last agent reasoning:\n" + "\n".join(
+        t.get("content", "")[:300] for t in agent_turns
+    )
+
+    extraction_prompt = f"""You are reviewing a fund research session to extract reusable learnings.
+
+{session_summary}
+
+Extract up to 6 high-value memories. Each memory must be one of:
+- "query": a search query template that reliably finds specific data
+- "source": a website domain that had accurate, useful data
+- "strategy": a general research insight for this fund category
+
+Return JSON:
+{{
+  "memories": [
+    {{
+      "type": "query",
+      "query_template": "{{ticker}} annual returns site:morningstar.com",
+      "what_it_finds": "precise annual return percentages by year",
+      "quality": "high|medium|low"
+    }},
+    {{
+      "type": "source",
+      "domain": "etf.com",
+      "reliable_for": ["expense ratio", "AUM", "top holdings"]
+    }},
+    {{
+      "type": "strategy",
+      "insight": "For crypto ETFs, search CoinGecko for NAV vs price premium/discount"
+    }}
+  ]
+}}
+
+Only include memories that genuinely helped find real data. Skip failed queries."""
+
+    try:
+        result = _llm_json("Extract reusable research learnings.", extraction_prompt)
+        memories = result.get("memories", [])
+        if not memories:
+            return
+
+        conn = get_db()
+        try:
+            for mem in memories[:6]:
+                mtype = mem.get("type", "strategy")
+                content = json.dumps(mem)
+                # Upsert: if similar query/domain exists for this category, increment hits
+                if mtype == "query":
+                    key = mem.get("query_template", "")
+                    existing = conn.execute(
+                        "SELECT id FROM fund_research_memory WHERE category=%s AND memory_type='query' AND content->>'query_template'=%s",
+                        (category, key)
+                    ).fetchone()
+                elif mtype == "source":
+                    key = mem.get("domain", "")
+                    existing = conn.execute(
+                        "SELECT id FROM fund_research_memory WHERE category=%s AND memory_type='source' AND content->>'domain'=%s",
+                        (category, key)
+                    ).fetchone()
+                else:
+                    existing = None
+
+                if existing:
+                    conn.execute(
+                        "UPDATE fund_research_memory SET hits=hits+1, updated_at=NOW() WHERE id=%s",
+                        (existing["id"],)
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO fund_research_memory (category, memory_type, content)
+                           VALUES (%s, %s, %s)""",
+                        (category, mtype, content)
+                    )
+            conn.commit()
+        finally:
+            put_db(conn)
+    except Exception:
+        pass  # Memory saving is best-effort — never block report generation
+
+
 def _research_agent_loop(fund_name: str, ticker: str, category: str,
                           current_year: int, current_month: str,
                           log=None) -> dict:
@@ -224,6 +380,9 @@ REQUIRED DATA (mark each as found when you have it):
 [ ] Market sentiment / investor emotion (fear-greed, VIX)
 """.format(year=current_year, y1=current_year-1, y2=current_year-2, y3=current_year-3)
 
+    # Load past learnings for this category
+    past_memories = _load_memories(category)
+
     system_prompt = f"""You are a meticulous fund research analyst collecting data for {label} ({category}).
 
 Your task: run web searches to gather ALL the data points in the checklist below.
@@ -232,8 +391,11 @@ Yahoo Finance, Bloomberg, Reuters, and fund provider sites.
 
 {CHECKLIST}
 
+{past_memories}
+
 After EACH search, assess what is still missing and search for that next.
 Prioritise exact percentage returns with signs (e.g. +12.4%, -8.1%).
+Start with PROVEN QUERIES from past sessions if available — they have already been validated.
 
 At each step respond with JSON:
 {{
@@ -346,6 +508,15 @@ Be precise. Search for exact numbers. If a well-known fund, you may already know
 
         observation += "\n\nWhat checklist items are now found? What should you search for next?"
         messages.append({"role": "user", "content": observation})
+
+    # Save learnings to memory in background thread
+    import threading
+    threading.Thread(
+        target=_save_memories,
+        args=(category, ticker, search_history, browsed_pages, messages),
+        daemon=True
+    ).start()
+    _log("think", f"Saving research learnings to memory for future {category} fund runs…")
 
     return {
         "search_results": all_results,

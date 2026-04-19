@@ -162,8 +162,12 @@
           Quick Pick
           <span style="font-weight:400;color:var(--muted);font-size:.78rem;">— select to auto-fill</span>
           {% if is_admin %}
-          <button type="button" class="btn-outline btn-sm" style="margin-left:auto;font-size:.72rem;padding:.15rem .55rem;"
-            onclick="document.getElementById('qpManageModal').style.display='flex'">⚙ Manage List</button>
+          <span style="margin-left:auto;display:flex;gap:.4rem;">
+            <button type="button" class="btn-outline btn-sm" style="font-size:.72rem;padding:.15rem .55rem;"
+              onclick="document.getElementById('qpManageModal').style.display='flex'">⚙ Manage List</button>
+            <button type="button" class="btn-outline btn-sm" style="font-size:.72rem;padding:.15rem .55rem;"
+              onclick="openMemoryModal()">🧠 Agent Memory</button>
+          </span>
           {% endif %}
         </label>
         <div style="position:relative;">
@@ -648,6 +652,79 @@ QP_DB.forEach(f=>FUNDS.push({name:f.fund_name,ticker:f.ticker,cat:f.category,exc
 document.addEventListener('click',e=>{
   if(e.target.closest('[onclick*="qpManageModal"]'))qpRender();
   if(e.target.id==='qpManageModal')e.target.style.display='none';
+});
+</script>
+
+<!-- Agent Memory Modal (admin only) -->
+<div id="memoryModal" class="modal-overlay" style="display:none;">
+  <div class="modal" style="width:760px;max-height:90vh;display:flex;flex-direction:column;">
+    <div class="modal-header" style="flex-shrink:0;">
+      <h3>🧠 Agent Research Memory</h3>
+      <button class="modal-close" onclick="document.getElementById('memoryModal').style.display='none'">✕</button>
+    </div>
+    <div style="padding:.6rem 1.2rem;flex-shrink:0;background:var(--bg2);border-bottom:1px solid var(--border);font-size:.78rem;color:var(--muted);">
+      Learned automatically from past research sessions. Higher hits = more validated. Admins can delete bad entries.
+    </div>
+    <div style="overflow-y:auto;flex:1;padding:1rem 1.2rem;" id="memoryBody">
+      <div style="text-align:center;padding:2rem;color:var(--muted);">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function openMemoryModal() {
+  document.getElementById('memoryModal').style.display='flex';
+  const body = document.getElementById('memoryBody');
+  body.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--muted);">Loading…</div>';
+  const rows = await fetch('/api/fund-research/memory').then(r=>r.json());
+  if(!rows.length){body.innerHTML='<div style="text-align:center;padding:2rem;color:var(--muted);">No memories yet. Run a fund report to start training the agent.</div>';return;}
+
+  const TYPE_COLOR = {query:'#1d4ed8',source:'#15803d',strategy:'#7c3aed'};
+  const TYPE_ICON  = {query:'🔍',source:'🌐',strategy:'💡'};
+
+  // Group by category
+  const groups = {};
+  rows.forEach(r=>{
+    const c = r.category||'(all)';
+    if(!groups[c])groups[c]=[];
+    groups[c].push(r);
+  });
+
+  let html = '';
+  for(const [cat, items] of Object.entries(groups)){
+    html += `<div style="margin-bottom:1.25rem;">
+      <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.5rem;padding-bottom:.3rem;border-bottom:1px solid var(--border);">${cat}</div>`;
+    items.forEach(r=>{
+      let c; try{c=typeof r.content==='string'?JSON.parse(r.content):r.content;}catch(e){c={};}
+      const mtype = r.memory_type||'strategy';
+      const color = TYPE_COLOR[mtype]||'#555';
+      const icon  = TYPE_ICON[mtype]||'·';
+      let detail = '';
+      if(mtype==='query')   detail = `<b>${c.query_template||''}</b><br><span style="color:var(--muted);font-size:.75rem;">Finds: ${c.what_it_finds||''} · Quality: ${c.quality||''}</span>`;
+      else if(mtype==='source') detail = `<b>${c.domain||''}</b><br><span style="color:var(--muted);font-size:.75rem;">Reliable for: ${(c.reliable_for||[]).join(', ')}</span>`;
+      else detail = `${c.insight||''}`;
+      html += `<div style="display:flex;align-items:flex-start;gap:.75rem;padding:.5rem .4rem;border-bottom:1px solid var(--border);">
+        <span style="font-size:.7rem;font-weight:700;background:${color}22;color:${color};padding:.2rem .5rem;border-radius:4px;flex-shrink:0;">${icon} ${mtype}</span>
+        <div style="flex:1;font-size:.8rem;line-height:1.5;">${detail}</div>
+        <div style="font-size:.72rem;color:var(--muted);flex-shrink:0;text-align:right;">
+          <div style="font-weight:700;color:var(--navy);">×${r.hits}</div>
+          <button onclick="delMemory(${r.id},this)" style="font-size:.68rem;color:#dc2626;background:none;border:none;cursor:pointer;padding:0;margin-top:.2rem;">✕ delete</button>
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+  body.innerHTML = html;
+}
+
+async function delMemory(id, btn) {
+  if(!confirm('Delete this memory?'))return;
+  await fetch(`/api/fund-research/memory/${id}/delete`,{method:'POST'});
+  btn.closest('div[style*="display:flex"]').remove();
+}
+
+document.addEventListener('click',e=>{
+  if(e.target.id==='memoryModal')e.target.style.display='none';
 });
 </script>
 {% endif %}
