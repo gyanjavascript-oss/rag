@@ -321,6 +321,64 @@
 </div>
 {% endif %}
 
+<!-- ── Report Summary ────────────────────────────────────────────── -->
+{% set ra_sum = report.get('risk_assessment', {}) %}
+{% set av_sum = report.get('analyst_verdict', {}) %}
+{% set geo_sum = report.get('geopolitical_risks', {}) %}
+{% set fo_sum = report.get('five_year_outlook', {}) %}
+{% set bc_sum = fo_sum.get('base_case', {}) %}
+<div style="background:var(--white);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:1.25rem;overflow:hidden;">
+  <!-- Summary header -->
+  <div style="padding:.85rem 1.25rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.5rem;">
+    <span style="font-size:.82rem;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.05em;">📝 Report Summary</span>
+  </div>
+  <!-- Stat pills row -->
+  <div style="display:flex;flex-wrap:wrap;gap:0;border-bottom:1px solid var(--border);">
+    {% set stat_items = [] %}
+    {% if ra_sum.get('overall_risk_rating') %}{% set _ = stat_items.append(('Risk', ra_sum.get('overall_risk_rating'), '#dc2626' if ra_sum.get('overall_risk_rating') == 'Very High' else ('#f97316' if ra_sum.get('overall_risk_rating') == 'High' else ('#eab308' if ra_sum.get('overall_risk_rating') == 'Medium' else '#059669')))) %}{% endif %}
+    {% if geo_sum.get('overall_geo_risk') %}{% set _ = stat_items.append(('Geo Risk', geo_sum.get('overall_geo_risk'), '#7c3aed' if geo_sum.get('overall_geo_risk') in ['High','Critical'] else '#6b7280')) %}{% endif %}
+    {% if av_sum.get('conviction_rating') %}{% set _ = stat_items.append(('Verdict', av_sum.get('conviction_rating'), '#059669' if av_sum.get('conviction_rating') in ['Buy','Strong Buy'] else ('#dc2626' if av_sum.get('conviction_rating') == 'Avoid' else '#1d4ed8'))) %}{% endif %}
+    {% if bc_sum.get('predicted_annual_return') and (bc_sum.get('predicted_annual_return')|lower) not in ['','n/a','unavailable'] %}{% set _ = stat_items.append(('Base Return/yr', bc_sum.get('predicted_annual_return'), '#1d4ed8')) %}{% endif %}
+    {% if bc_sum.get('probability') %}{% set _ = stat_items.append(('Base Prob', bc_sum.get('probability'), '#1d4ed8')) %}{% endif %}
+    {% if av_sum.get('time_horizon_recommendation') and (av_sum.get('time_horizon_recommendation')|lower) not in ['','n/a','unavailable'] %}{% set _ = stat_items.append(('Horizon', av_sum.get('time_horizon_recommendation'), '#6b7280')) %}{% endif %}
+    {% for label, val, color in stat_items %}
+    <div style="flex:1;min-width:120px;padding:.75rem 1rem;border-right:1px solid var(--border);text-align:center;">
+      <div style="font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem;">{{ label }}</div>
+      <div style="font-size:.88rem;font-weight:800;color:{{ color }};">{{ val }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <!-- Verdict + Catalysts -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;">
+    {% if av_sum.get('summary') and (av_sum.get('summary')|lower) not in ['','n/a','unavailable'] %}
+    <div style="padding:1rem 1.25rem;border-right:1px solid var(--border);">
+      <div style="font-size:.68rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem;">Analyst Summary</div>
+      <div style="font-size:.86rem;color:var(--navy);line-height:1.65;">{{ av_sum.get('summary') }}</div>
+    </div>
+    {% endif %}
+    <div style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.6rem;">
+      {% if av_sum.get('biggest_upside_catalyst') and (av_sum.get('biggest_upside_catalyst')|lower) not in ['','n/a','unavailable'] %}
+      <div>
+        <div style="font-size:.67rem;font-weight:700;color:#059669;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.2rem;">↑ Biggest Upside</div>
+        <div style="font-size:.83rem;color:var(--navy);line-height:1.55;">{{ av_sum.get('biggest_upside_catalyst') }}</div>
+      </div>
+      {% endif %}
+      {% if av_sum.get('biggest_downside_risk') and (av_sum.get('biggest_downside_risk')|lower) not in ['','n/a','unavailable'] %}
+      <div>
+        <div style="font-size:.67rem;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.2rem;">↓ Biggest Downside</div>
+        <div style="font-size:.83rem;color:var(--navy);line-height:1.55;">{{ av_sum.get('biggest_downside_risk') }}</div>
+      </div>
+      {% endif %}
+      {% if av_sum.get('suitable_for') and (av_sum.get('suitable_for')|lower) not in ['','n/a','unavailable'] %}
+      <div>
+        <div style="font-size:.67rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.2rem;">Suitable For</div>
+        <div style="font-size:.83rem;color:var(--muted);line-height:1.55;">{{ av_sum.get('suitable_for') }}</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
 <!-- ── Fund Overview + Historical Performance ────────────────────── -->
 <div class="r-grid wide">
   <div class="r-card">
@@ -662,6 +720,99 @@
   {% endif %}
   {% endfor %}
 </div>
+
+<!-- ── 5-Year Prediction Chart ─────────────────────────────────────── -->
+{% set bull_ret_raw = fo.get('bull_case',{}).get('predicted_annual_return','') | replace('%','') | replace('+','') | replace('~','') %}
+{% set base_ret_raw = fo.get('base_case',{}).get('predicted_annual_return','') | replace('%','') | replace('+','') | replace('~','') %}
+{% set bear_ret_raw = fo.get('bear_case',{}).get('predicted_annual_return','') | replace('%','') | replace('+','') | replace('~','') %}
+{% set has_chart_data = bull_ret_raw or base_ret_raw or bear_ret_raw %}
+{% if has_chart_data %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📈 5-Year Return Projection</div>
+  <div class="r-card-body">
+    <div style="position:relative;height:260px;">
+      <canvas id="fiveYearChart"></canvas>
+    </div>
+    <div style="display:flex;gap:1.25rem;justify-content:center;margin-top:.85rem;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:.4rem;font-size:.78rem;"><span style="width:14px;height:3px;background:#15803d;display:inline-block;border-radius:2px;"></span> Bull Case ({{ fo.get('bull_case',{}).get('predicted_annual_return','—') }}/yr)</div>
+      <div style="display:flex;align-items:center;gap:.4rem;font-size:.78rem;"><span style="width:14px;height:3px;background:#1d4ed8;display:inline-block;border-radius:2px;"></span> Base Case ({{ fo.get('base_case',{}).get('predicted_annual_return','—') }}/yr)</div>
+      <div style="display:flex;align-items:center;gap:.4rem;font-size:.78rem;"><span style="width:14px;height:3px;background:#dc2626;display:inline-block;border-radius:2px;"></span> Bear Case ({{ fo.get('bear_case',{}).get('predicted_annual_return','—') }}/yr)</div>
+    </div>
+    <div style="text-align:center;font-size:.72rem;color:var(--muted);margin-top:.5rem;">Cumulative return % compounded from today · AI projection only</div>
+  </div>
+</div>
+<script>
+(function(){
+  const currentYear = new Date().getFullYear();
+  const years = [currentYear, currentYear+1, currentYear+2, currentYear+3, currentYear+4, currentYear+5];
+  const labels = years.map((y,i) => i === 0 ? 'Now' : String(y));
+
+  function compound(annualPctStr, years) {
+    const r = parseFloat(annualPctStr);
+    if (isNaN(r)) return null;
+    const points = [0];
+    for (let i = 1; i <= years; i++) {
+      points.push(parseFloat(((Math.pow(1 + r/100, i) - 1) * 100).toFixed(2)));
+    }
+    return points;
+  }
+
+  const bullData = compound({{ bull_ret_raw | tojson }}, 5);
+  const baseData = compound({{ base_ret_raw | tojson }}, 5);
+  const bearData = compound({{ bear_ret_raw | tojson }}, 5);
+
+  const datasets = [];
+  if (bullData) datasets.push({
+    label: 'Bull Case', data: bullData,
+    borderColor: '#15803d', backgroundColor: 'rgba(21,128,61,.08)',
+    fill: false, tension: 0.35, pointRadius: 4, pointBackgroundColor: '#15803d',
+    borderWidth: 2.5
+  });
+  if (baseData) datasets.push({
+    label: 'Base Case', data: baseData,
+    borderColor: '#1d4ed8', backgroundColor: 'rgba(29,78,216,.06)',
+    fill: false, tension: 0.35, pointRadius: 4, pointBackgroundColor: '#1d4ed8',
+    borderWidth: 2.5, borderDash: []
+  });
+  if (bearData) datasets.push({
+    label: 'Bear Case', data: bearData,
+    borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,.06)',
+    fill: false, tension: 0.35, pointRadius: 4, pointBackgroundColor: '#dc2626',
+    borderWidth: 2.5, borderDash: [5,3]
+  });
+
+  if (!datasets.length) return;
+
+  new Chart(document.getElementById('fiveYearChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.dataset.label + ': ' + (ctx.raw >= 0 ? '+' : '') + ctx.raw.toFixed(1) + '%'
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        y: {
+          grid: { color: 'rgba(0,0,0,.06)', borderDash: [3,3] },
+          ticks: {
+            callback: v => (v >= 0 ? '+' : '') + v + '%',
+            font: { size: 11 }
+          }
+        }
+      }
+    }
+  });
+})();
+</script>
+{% endif %}
 
 <!-- Key Milestones -->
 {% set valid_milestones = [] %}
