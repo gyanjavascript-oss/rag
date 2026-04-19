@@ -185,82 +185,196 @@ Focus on events most directly relevant to {fund_name} in {current_month}. Be spe
     return evidence
 
 
-def _gather_evidence(fund_name: str, ticker: str = "", category: str = "", log=None) -> dict:
-    """Run targeted web searches, news searches, and optionally browse top URLs."""
-    label = f"{fund_name} {ticker}".strip()
-    import datetime
-    current_year = datetime.date.today().year
-    current_month = datetime.date.today().strftime("%B %Y")
+def _research_agent_loop(fund_name: str, ticker: str, category: str,
+                          current_year: int, current_month: str,
+                          log=None) -> dict:
+    """
+    LLM-driven research agent. The LLM decides what to search at every step —
+    performance data, holdings, risk metrics, news, sentiment — and iterates
+    until it has enough evidence or reaches MAX_ROUNDS.
 
-    research_queries = [
-        f"{label} annual returns {current_year-1} {current_year-2} {current_year-3} performance",
-        f"{label} YTD return {current_year} year to date performance",
-        f"{label} 1 year 3 year 5 year annualised return",
-        f"{label} AUM assets under management net flows {current_year}",
-        f"{label} investment strategy portfolio holdings sector allocation",
-        f"{label} risk factors volatility drawdown sharpe ratio",
-        f"{label} analyst outlook forecast {current_year} {current_year+1}",
-        f"{label} expense ratio fees performance vs benchmark index",
-        f"{ticker or fund_name} historical performance data morningstar",
-    ]
+    Returns dict with keys: search_results, news_results, browsed_pages.
+    """
+    client, model = _get_client()
+    label = f"{fund_name} ({ticker})" if ticker else fund_name
+    MAX_ROUNDS = 12
 
-    news_queries = [
-        f"{label} news {current_month}",
-        f"{label} latest update {current_year}",
-        f"{ticker or fund_name} fund flows inflows outflows {current_year}",
-        f"{label} SEC filing regulatory news {current_year}",
-        f"{ticker or fund_name} performance news {current_year}",
-        f"{label} investor outlook analyst rating {current_year}",
-        f"{ticker or fund_name} ETF news today",
-    ]
+    # What data the LLM must try to find
+    CHECKLIST = """
+REQUIRED DATA (mark each as found when you have it):
+[ ] YTD return {year}
+[ ] 1-year return
+[ ] 3-year annualised return
+[ ] 5-year annualised return
+[ ] 10-year annualised return or since-inception
+[ ] Annual return {y1} (exact %)
+[ ] Annual return {y2} (exact %)
+[ ] Annual return {y3} (exact %)
+[ ] AUM / assets under management
+[ ] Expense ratio / TER
+[ ] Top 5-10 holdings with weights
+[ ] Sector allocation
+[ ] Geographic exposure
+[ ] Max drawdown
+[ ] Sharpe ratio or risk metrics
+[ ] Benchmark comparison
+[ ] Analyst outlook / rating for {year}
+[ ] Recent news headline (at least 5 distinct items)
+[ ] Fund flows / inflows-outflows
+[ ] Market sentiment / investor emotion (fear-greed, VIX)
+""".format(year=current_year, y1=current_year-1, y2=current_year-2, y3=current_year-3)
+
+    system_prompt = f"""You are a meticulous fund research analyst collecting data for {label} ({category}).
+
+Your task: run web searches to gather ALL the data points in the checklist below.
+Search smartly — adapt queries based on what results you find. Use Morningstar, ETF.com,
+Yahoo Finance, Bloomberg, Reuters, and fund provider sites.
+
+{CHECKLIST}
+
+After EACH search, assess what is still missing and search for that next.
+Prioritise exact percentage returns with signs (e.g. +12.4%, -8.1%).
+
+At each step respond with JSON:
+{{
+  "reasoning": "what I found and what I still need",
+  "found_items": ["list of checklist items now confirmed found"],
+  "search_query": "the exact query to run next",
+  "query_type": "performance|holdings|risk|news|sentiment|flows|other",
+  "done": false
+}}
+
+When ALL critical items are found (or after enough rounds), set done=true:
+{{
+  "reasoning": "summary of all data collected",
+  "found_items": [],
+  "search_query": "",
+  "query_type": "other",
+  "done": true
+}}
+
+Be precise. Search for exact numbers. If a well-known fund, you may already know some figures — still verify with a search."""
 
     def _log(phase, text):
         if log:
             log(phase, text)
 
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.append({
+        "role": "user",
+        "content": (
+            f"Start collecting data for {label} as of {current_month}. "
+            f"What is the most important thing to search for first to get accurate performance numbers?"
+        )
+    })
+
     all_results = []
-    browsed_content = []
     news_results = []
+    browsed_pages = []
+    search_history = []
+    round_num = 0
 
-    # Research queries — browse top result each
-    for i, q in enumerate(research_queries):
-        _log("search", f"[{i+1}/{len(research_queries)}] {q}")
-        results = _web_search(q, max_results=4)
-        all_results.extend(results)
-        for r in results[:1]:
-            url = r.get("url", "")
-            if url and url.startswith("http") and "google" not in url:
-                _log("browse", f"Reading: {url}")
-                text = _browse(url, char_limit=2500)
-                if text and not text.startswith("[Browse failed"):
-                    browsed_content.append(f"SOURCE: {url}\n{text[:2000]}")
-                time.sleep(0.3)
+    _log("phase", f"Research agent starting for {label}…")
 
-    # News queries — collect snippets, browse top result
-    _log("phase", "Fetching latest news…")
-    for q in news_queries:
-        _log("search", q)
-        results = _web_search(q, max_results=5)
+    while round_num < MAX_ROUNDS:
+        round_num += 1
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=600,
+                response_format={"type": "json_object"},
+            )
+            raw = resp.choices[0].message.content or "{}"
+            action = json.loads(raw)
+        except Exception:
+            break
+
+        messages.append({"role": "assistant", "content": raw})
+
+        reasoning = action.get("reasoning", "")
+        if reasoning:
+            _log("think", reasoning)
+
+        if action.get("done"):
+            _log("done", f"Research agent complete after {round_num} rounds.")
+            break
+
+        query = action.get("search_query", "").strip()
+        if not query or query in search_history:
+            break
+        search_history.append(query)
+
+        q_type = action.get("query_type", "other")
+        _log("search", f"[{round_num}/{MAX_ROUNDS}] {query}")
+
+        results = _web_search(query, max_results=5)
+
+        is_news = q_type in ("news", "sentiment")
         for r in results:
-            r["_news"] = True
-        news_results.extend(results)
-        for r in results[:1]:
-            url = r.get("url", "")
-            if url and url.startswith("http") and "google" not in url:
-                _log("browse", f"Reading: {url}")
-                text = _browse(url, char_limit=2000)
-                if text and not text.startswith("[Browse failed"):
-                    browsed_content.append(f"[NEWS] SOURCE: {url}\n{text[:1600]}")
-                time.sleep(0.3)
+            if is_news:
+                r["_news"] = True
+                news_results.append(r)
+            else:
+                all_results.append(r)
 
-    # Geopolitical agent loop — LLM decides what to search
-    _log("phase", "Starting geopolitical & sentiment agent loop…")
-    geo_results = _geopolitical_agent_loop(fund_name, ticker, category, current_year, current_month, log=log)
+        # Browse top non-Google URL
+        top_url = next(
+            (r.get("url", "") for r in results
+             if r.get("url", "").startswith("http") and "google" not in r.get("url", "")),
+            ""
+        )
+        page_text = ""
+        if top_url:
+            _log("browse", f"Reading: {top_url}")
+            char_lim = 3000 if q_type == "performance" else 2000
+            page_text = _browse(top_url, char_limit=char_lim)
+            if page_text and not page_text.startswith("[Browse failed"):
+                tag = "[NEWS]" if is_news else "[RESEARCH]"
+                browsed_pages.append(f"{tag} SOURCE: {top_url}\n{page_text[:2500]}")
+            time.sleep(0.3)
+
+        # Feed results back to agent
+        snippets = []
+        for r in results:
+            snippets.append(
+                f"[{r.get('title','')}] {r.get('snippet','')}\nURL: {r.get('url','')}"
+            )
+        observation = f"SEARCH RESULTS FOR: {query}\n\n" + "\n\n".join(snippets[:5])
+        if page_text and not page_text.startswith("[Browse failed"):
+            observation += f"\n\nFULL PAGE ({top_url}):\n{page_text[:1200]}"
+
+        observation += "\n\nWhat checklist items are now found? What should you search for next?"
+        messages.append({"role": "user", "content": observation})
 
     return {
         "search_results": all_results,
         "news_results": news_results,
-        "browsed_pages": browsed_content,
+        "browsed_pages": browsed_pages,
+    }
+
+
+def _gather_evidence(fund_name: str, ticker: str = "", category: str = "", log=None) -> dict:
+    """Run LLM-driven research agent + geopolitical agent loop."""
+    import datetime
+    current_year = datetime.date.today().year
+    current_month = datetime.date.today().strftime("%B %Y")
+
+    def _log(phase, text):
+        if log:
+            log(phase, text)
+
+    # Main research agent — LLM decides all queries adaptively
+    evidence = _research_agent_loop(fund_name, ticker, category, current_year, current_month, log=log)
+
+    # Geopolitical + sentiment agent loop — separate focused loop
+    _log("phase", "Starting geopolitical & market sentiment agent loop…")
+    geo_results = _geopolitical_agent_loop(fund_name, ticker, category, current_year, current_month, log=log)
+
+    return {
+        "search_results": evidence["search_results"],
+        "news_results": evidence["news_results"],
+        "browsed_pages": evidence["browsed_pages"],
         "geo_results": geo_results,
     }
 
