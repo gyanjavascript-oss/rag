@@ -199,56 +199,115 @@
 .dq-Medium { background: #fef3c7; color: #92400e; }
 .dq-Low { background: #fee2e2; color: #991b1b; }
 
-/* ── Loader ──────────────────────────────────────────── */
-.spin {
-  display: inline-block; width: 20px; height: 20px;
-  border: 3px solid rgba(255,255,255,.3); border-top-color: #fff;
-  border-radius: 50%; animation: spin .8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+/* ── Sci-Fi Generation Overlay ───────────────────────── */
+@keyframes fadeIn    { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+@keyframes scanLine  { 0%{top:-2px} 100%{top:100%} }
+@keyframes hexPulse  { 0%,100%{transform:scale(1);opacity:.9} 50%{transform:scale(1.08);opacity:1} }
+@keyframes hexRing   { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+@keyframes hexRingRev{ from{transform:rotate(0deg)} to{transform:rotate(-360deg)} }
+@keyframes glitch    { 0%,95%,100%{transform:none;opacity:1} 96%{transform:translateX(-3px);opacity:.7} 98%{transform:translateX(2px);opacity:.8} }
+@keyframes blink     { 0%,100%{opacity:1} 50%{opacity:0} }
+@keyframes dataFlow  { from{transform:translateY(-100%)} to{transform:translateY(100vh)} }
+@keyframes arcFill   { from{stroke-dashoffset:440} to{stroke-dashoffset:var(--target)} }
 
-/* ── Full-screen generation loader ──────────────────── */
 #genOverlay {
   display: none;
   position: fixed; inset: 0; z-index: 9999;
-  background: rgba(10, 18, 40, 0.82);
-  backdrop-filter: blur(4px);
-  flex-direction: column; align-items: center; justify-content: center; gap: 1.5rem;
+  background: radial-gradient(ellipse at center, #020818 0%, #000510 100%);
+  flex-direction: column; align-items: center; justify-content: center;
+  overflow: hidden;
+  font-family: 'Courier New', monospace;
 }
 #genOverlay.active { display: flex; }
-.gen-spinner {
-  width: 56px; height: 56px;
-  border: 5px solid rgba(255,255,255,.15);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin .75s linear infinite;
+
+/* Scrolling matrix columns */
+.sci-matrix-col {
+  position: absolute; top: 0; width: 1px; overflow: hidden;
+  font-size: .55rem; line-height: 1.2; color: #00ff4133;
+  writing-mode: vertical-lr; animation: dataFlow 4s linear infinite;
+  user-select: none; pointer-events: none; white-space: nowrap;
 }
-.gen-overlay-title { color: #fff; font-size: 1.15rem; font-weight: 700; }
-.gen-overlay-step  { color: rgba(255,255,255,.65); font-size: .88rem; min-height: 1.4em; transition: opacity .3s; }
-.gen-progress-track {
-  width: 260px; height: 4px; background: rgba(255,255,255,.15); border-radius: 2px; overflow: hidden;
+
+/* Horizontal scan line */
+.sci-scan {
+  position: absolute; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, #00d4ff44, #00d4ffaa, #00d4ff44, transparent);
+  animation: scanLine 3s linear infinite;
+  pointer-events: none; z-index: 1;
 }
-.gen-progress-fill {
-  height: 100%; width: 0%; background: #fff; border-radius: 2px;
-  transition: width 7s linear;
+
+/* Corner HUD brackets */
+.sci-bracket {
+  position: absolute; width: 24px; height: 24px;
+  border-color: #00d4ff55; border-style: solid;
 }
-.gen-steps-list {
-  display: flex; flex-direction: column; gap: .35rem; align-items: flex-start;
+.sci-bracket.tl { top:18px; left:18px; border-width:2px 0 0 2px; }
+.sci-bracket.tr { top:18px; right:18px; border-width:2px 2px 0 0; }
+.sci-bracket.bl { bottom:18px; left:18px; border-width:0 0 2px 2px; }
+.sci-bracket.br { bottom:18px; right:18px; border-width:0 2px 2px 0; }
+
+/* Centre HUD */
+.sci-hud {
+  position: relative; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; gap: 1.4rem;
+  width: 100%; max-width: 680px; padding: 0 1.5rem;
 }
-.gen-step-item {
-  display: flex; align-items: center; gap: .55rem;
-  color: rgba(255,255,255,.45); font-size: .8rem; transition: color .3s;
+
+/* Hex ring visual */
+.sci-hex-wrap { position: relative; width: 110px; height: 110px; }
+.sci-hex-wrap svg { position: absolute; inset: 0; }
+.sci-hex-wrap svg.ring1 { animation: hexRing    3s linear infinite; }
+.sci-hex-wrap svg.ring2 { animation: hexRingRev 2s linear infinite; }
+.sci-hex-core {
+  position: absolute; inset: 20px;
+  background: radial-gradient(circle, #003fff22 0%, #000d2a 70%);
+  border-radius: 50%; border: 1px solid #00d4ff55;
+  display: flex; align-items: center; justify-content: center;
+  animation: hexPulse 1.8s ease-in-out infinite;
 }
-.gen-step-item.done  { color: rgba(255,255,255,.9); }
-.gen-step-item.active { color: #fff; font-weight: 600; }
-.gen-step-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.25); flex-shrink: 0;
-  transition: background .3s;
+.sci-hex-icon { font-size: 1.6rem; filter: drop-shadow(0 0 8px #00d4ffcc); }
+
+/* Title & step */
+.sci-title {
+  font-size: 1.05rem; font-weight: 700; letter-spacing: .18em;
+  text-transform: uppercase; color: #00d4ff;
+  text-shadow: 0 0 14px #00d4ffcc, 0 0 30px #00d4ff66;
+  animation: glitch 6s ease-in-out infinite;
 }
-.gen-step-item.done  .gen-step-dot { background: #34d399; }
-.gen-step-item.active .gen-step-dot { background: #fff; animation: dotPulse 1s ease-in-out infinite; }
-@keyframes dotPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(1.4)} }
-@keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+.sci-step {
+  font-size: .78rem; color: #4ade80; letter-spacing: .08em;
+  min-height: 1.2em; text-shadow: 0 0 8px #4ade8088;
+}
+.sci-cursor { animation: blink 1s step-end infinite; }
+
+/* Arc progress bar (SVG) */
+.sci-arc-wrap { position: relative; width: 280px; }
+.sci-arc-label {
+  position: absolute; bottom: -18px; right: 0;
+  font-size: .68rem; color: #00d4ff88; letter-spacing: .06em;
+}
+
+/* Thoughts terminal */
+.sci-terminal {
+  width: 100%; max-height: 230px; overflow-y: auto;
+  background: rgba(0, 212, 255, 0.03);
+  border: 1px solid #00d4ff22;
+  border-radius: 6px;
+  padding: .6rem .9rem;
+  display: flex; flex-direction: column; gap: .28rem;
+  scrollbar-width: thin; scrollbar-color: #00d4ff22 transparent;
+}
+.sci-term-header {
+  font-size: .63rem; color: #00d4ff44; letter-spacing: .12em;
+  text-transform: uppercase; margin-bottom: .3rem; border-bottom: 1px solid #00d4ff11; padding-bottom: .25rem;
+}
+.sci-term-line {
+  display: flex; gap: .45rem; align-items: flex-start;
+  font-size: .73rem; line-height: 1.5;
+  animation: fadeIn .25s ease;
+}
+
+.sci-eta { font-size: .65rem; color: #ffffff25; letter-spacing: .08em; }
 </style>
 {% endblock %}
 
@@ -1311,58 +1370,128 @@ function toggleThinking() {
 </div>
 {% endif %}
 
-<!-- ── Generation overlay ──────────────────────────────────────────── -->
+<!-- ── Sci-Fi Generation Overlay ──────────────────────────────────── -->
 <div id="genOverlay">
-  <div style="display:flex;flex-direction:column;align-items:center;gap:1.25rem;width:100%;max-width:640px;padding:0 1.5rem;">
-    <div class="gen-spinner"></div>
+  <!-- Ambient matrix rain -->
+  <div id="sciMatrix" aria-hidden="true"></div>
+  <!-- Horizontal scan line -->
+  <div class="sci-scan"></div>
+  <!-- Corner HUD brackets -->
+  <div class="sci-bracket tl"></div><div class="sci-bracket tr"></div>
+  <div class="sci-bracket bl"></div><div class="sci-bracket br"></div>
+
+  <!-- Centre HUD panel -->
+  <div class="sci-hud">
+
+    <!-- Rotating hex ring -->
+    <div class="sci-hex-wrap">
+      <!-- Outer dashed ring -->
+      <svg class="ring1" viewBox="0 0 110 110" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="55" cy="55" r="50" stroke="#00d4ff" stroke-width="1" stroke-dasharray="8 6" opacity=".4"/>
+        <circle cx="55" cy="55" r="44" stroke="#0062ff" stroke-width=".5" stroke-dasharray="3 9" opacity=".3"/>
+      </svg>
+      <!-- Inner reverse ring -->
+      <svg class="ring2" viewBox="0 0 110 110" fill="none" xmlns="http://www.w3.org/2000/svg" style="top:8px;left:8px;width:94px;height:94px;">
+        <circle cx="47" cy="47" r="38" stroke="#4ade80" stroke-width="1" stroke-dasharray="5 8" opacity=".35"/>
+      </svg>
+      <!-- SVG arc progress -->
+      <svg id="sciArcSvg" viewBox="0 0 110 110" fill="none" xmlns="http://www.w3.org/2000/svg"
+           style="position:absolute;inset:0;transform:rotate(-90deg);">
+        <circle cx="55" cy="55" r="50" stroke="#00d4ff" stroke-width="2.5" opacity=".12"/>
+        <circle id="sciArcPath" cx="55" cy="55" r="50"
+          stroke="url(#arcGrad)" stroke-width="2.5" stroke-linecap="round"
+          stroke-dasharray="314" stroke-dashoffset="314"
+          style="transition:stroke-dashoffset 1.2s cubic-bezier(.4,0,.2,1)"/>
+        <defs>
+          <linearGradient id="arcGrad" x1="0" y1="0" x2="110" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#00d4ff"/>
+            <stop offset="100%" stop-color="#4ade80"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <!-- Core icon -->
+      <div class="sci-hex-core">
+        <span class="sci-hex-icon">🛰️</span>
+      </div>
+    </div>
+
+    <!-- Title -->
     <div style="text-align:center;">
-      <div class="gen-overlay-title">Researching Fund…</div>
-      <div class="gen-overlay-step" id="overlayStep">Starting up…</div>
-    </div>
-    <div class="gen-progress-track" style="width:100%;">
-      <div class="gen-progress-fill" id="overlayFill"></div>
+      <div class="sci-title">ANALYSING FUND</div>
+      <div class="sci-step" id="overlayStep">INITIALISING RESEARCH AGENT<span class="sci-cursor">_</span></div>
     </div>
 
-    <!-- Live agent thoughts terminal -->
-    <div id="thoughtsBox" style="
-      width:100%;max-height:260px;overflow-y:auto;
-      background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.12);
-      border-radius:8px;padding:.75rem 1rem;font-family:monospace;font-size:.76rem;
-      display:flex;flex-direction:column;gap:.3rem;
-    ">
-      <div style="color:rgba(255,255,255,.35);margin-bottom:.25rem;">Agent thinking</div>
+    <!-- Arc label row -->
+    <div class="sci-arc-wrap">
+      <svg viewBox="0 0 280 6" fill="none" style="width:100%;">
+        <rect width="280" height="6" rx="3" fill="#00d4ff11"/>
+        <rect id="overlayFill" width="0" height="6" rx="3" fill="url(#barGrad)" style="transition:width 7s linear;"/>
+        <defs>
+          <linearGradient id="barGrad" x1="0" y1="0" x2="280" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#0062ff"/>
+            <stop offset="100%" stop-color="#00d4ff"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <div class="sci-arc-label" id="sciPct">0%</div>
     </div>
 
-    <div style="color:rgba(255,255,255,.35);font-size:.72rem;">This typically takes 60–90 seconds</div>
+    <!-- Live thoughts terminal -->
+    <div class="sci-terminal" id="thoughtsBox">
+      <div class="sci-term-header">◈ AGENT COGNITIVE STREAM</div>
+    </div>
+
+    <div class="sci-eta">ESTIMATED PROCESSING TIME: 60–90 SEC</div>
   </div>
 </div>
 
 <script>
+/* ── Matrix rain ─────────────────────────────────────── */
+(function initMatrix() {
+  const wrap = document.getElementById('sciMatrix');
+  if (!wrap) return;
+  const CHARS = '01アイウエオカキクケコサシスセソタチツテトABCDEF0123456789▓▒░█▄▀';
+  const cols = Math.floor(window.innerWidth / 18);
+  for (let i = 0; i < cols; i++) {
+    const col = document.createElement('div');
+    col.className = 'sci-matrix-col';
+    col.style.left = (i * 18) + 'px';
+    col.style.animationDuration = (2.5 + Math.random() * 4) + 's';
+    col.style.animationDelay    = (-Math.random() * 6) + 's';
+    col.style.opacity = (0.04 + Math.random() * 0.10).toFixed(2);
+    let str = '';
+    for (let j = 0; j < 40; j++) str += CHARS[Math.floor(Math.random()*CHARS.length)];
+    col.textContent = str;
+    wrap.appendChild(col);
+  }
+})();
+
 const PHASE_STYLE = {
-  phase:  { icon: '◆', color: '#60a5fa' },
-  think:  { icon: '💭', color: '#a78bfa' },
-  search: { icon: '🔍', color: '#34d399' },
-  browse: { icon: '🌐', color: '#fbbf24' },
-  done:   { icon: '✓',  color: '#34d399' },
+  phase:  { icon: '◆', color: '#60a5fa', textColor: '#93c5fd' },
+  think:  { icon: '⟡', color: '#a78bfa', textColor: '#c4b5fd' },
+  search: { icon: '⌕', color: '#34d399', textColor: '#6ee7b7' },
+  browse: { icon: '◉', color: '#fbbf24', textColor: '#fde68a' },
+  done:   { icon: '✔', color: '#34d399', textColor: '#86efac' },
 };
 
 function renderThoughts(thoughts) {
   const box = document.getElementById('thoughtsBox');
   thoughts.forEach(t => {
-    const st = PHASE_STYLE[t.phase] || { icon: '·', color: '#9ca3af' };
+    const st = PHASE_STYLE[t.phase] || { icon: '·', color: '#4b5563', textColor: '#9ca3af' };
     const line = document.createElement('div');
-    line.style.cssText = `display:flex;gap:.5rem;align-items:flex-start;animation:fadeIn .3s ease;`;
-    line.innerHTML = `
-      <span style="color:${st.color};flex-shrink:0;margin-top:.05rem;">${st.icon}</span>
-      <span style="color:${t.phase === 'think' ? '#c4b5fd' : 'rgba(255,255,255,.8)'};">${escHtml(t.text)}</span>
-    `;
+    line.className = 'sci-term-line';
+    line.innerHTML =
+      `<span style="color:${st.color};flex-shrink:0;font-size:.78rem;">${st.icon}</span>` +
+      `<span style="color:${st.textColor};">${escHtml(t.text)}</span>`;
     box.appendChild(line);
     box.scrollTop = box.scrollHeight;
 
-    // Also update the main step label for phase/think entries
     if (t.phase === 'phase' || t.phase === 'think') {
       const stepEl = document.getElementById('overlayStep');
-      if (stepEl) stepEl.textContent = t.text.length > 70 ? t.text.slice(0,70)+'…' : t.text;
+      if (stepEl) {
+        const txt = t.text.length > 72 ? t.text.slice(0,72)+'…' : t.text;
+        stepEl.innerHTML = txt.toUpperCase() + '<span class="sci-cursor">_</span>';
+      }
     }
   });
 }
@@ -1406,28 +1535,37 @@ const STEPS = [
   'Writing report…',
 ];
 
+let _sciPct = 0;
+function _setSciPct(pct) {
+  _sciPct = Math.min(100, pct);
+  const arc  = document.getElementById('sciArcPath');
+  const fill = document.getElementById('overlayFill');
+  const lbl  = document.getElementById('sciPct');
+  // Arc: circumference=314, dashoffset goes 314→0
+  if (arc)  arc.style.strokeDashoffset  = (314 * (1 - _sciPct/100)).toFixed(1);
+  // Bar: SVG rect width 0→280
+  if (fill) fill.setAttribute('width', (280 * _sciPct/100).toFixed(1));
+  if (lbl)  lbl.textContent = Math.round(_sciPct) + '%';
+}
+
 function showOverlay() {
   const overlay = document.getElementById('genOverlay');
   const stepEl  = document.getElementById('overlayStep');
-  const fillEl  = document.getElementById('overlayFill');
   const box     = document.getElementById('thoughtsBox');
 
-  // Clear previous thoughts (keep the "Agent log" header)
-  if (box) box.innerHTML = '<div style="color:rgba(255,255,255,.35);margin-bottom:.25rem;">Agent thinking</div>';
-  if (stepEl) stepEl.textContent = 'Starting up…';
-  if (fillEl) { fillEl.style.transition = 'none'; fillEl.style.width = '0%'; }
+  if (box) box.innerHTML = '<div class="sci-term-header">◈ AGENT COGNITIVE STREAM</div>';
+  if (stepEl) stepEl.innerHTML = 'INITIALISING RESEARCH AGENT<span class="sci-cursor">_</span>';
+  _setSciPct(0);
 
   overlay.classList.add('active');
   document.body.style.overflow = 'hidden';
 
-  // Slowly advance fill bar as a fallback timer
+  // Slowly advance arc as a fallback timer (each step = 100/STEPS.length %)
   let idx = 0;
+  const perStep = 100 / STEPS.length;
   function advance() {
     idx++;
-    if (fillEl && idx <= STEPS.length) {
-      fillEl.style.transition = 'width 7s linear';
-      fillEl.style.width = ((idx / STEPS.length) * 100) + '%';
-    }
+    _setSciPct(idx * perStep);
   }
   advance();
   return setInterval(advance, 7000);
@@ -1436,9 +1574,8 @@ function showOverlay() {
 function hideOverlay(timer) {
   clearInterval(timer);
   const overlay = document.getElementById('genOverlay');
-  const fillEl  = document.getElementById('overlayFill');
-  // Flash fill to 100% then hide
-  if (fillEl) { fillEl.style.transition = 'width .4s'; fillEl.style.width = '100%'; }
+  // Flash to 100%
+  _setSciPct(100);
   setTimeout(() => {
     overlay.classList.remove('active');
     document.body.style.overflow = '';
