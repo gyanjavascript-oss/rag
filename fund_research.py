@@ -99,11 +99,14 @@ def _geopolitical_agent_loop(fund_name: str, ticker: str, category: str,
 
 Your job is to run web searches to find:
 - Active geopolitical conflicts and their market impact (wars, sanctions, proxy conflicts)
-- Black/grey market activity relevant to the asset class (e.g. crypto used to bypass Iran/Russia sanctions, shadow oil markets)
+- BLACK MARKET & SHADOW ECONOMY news: dark web trading, sanctioned nation crypto evasion (Iran/Russia/North Korea using BTC/USDT), shadow oil/commodity markets, underground money flows, hawala networks, illicit asset flows that move prices
+- BIDDING & AUCTION MARKET news: treasury bond auction results & bid-to-cover ratios, dark pool block trades, commodity exchange auction outcomes, ETF creation/redemption arbitrage, real estate auction data, art/collectible auction results if relevant, exchange-level order book imbalances
 - Market emotion & sentiment: fear/greed index, investor panic or euphoria, VIX levels
 - Macro political risks: US-China tensions, Middle East instability, BRICS de-dollarization, currency wars
 - Regulatory crackdowns: OFAC sanctions, SEC actions, FATF rules affecting this asset class
 - Specific country-level risks affecting this fund's holdings or strategy
+
+Search for black market AND bidding/auction news explicitly — these are required sections.
 
 At each step, respond with JSON:
 {{
@@ -634,6 +637,8 @@ CRITICAL RULES:
 4. top_holdings and sector_allocation must list real holdings/sectors with approximate weights if known.
 5. For key_milestones "why" fields: write 2-4 detailed sentences. Do NOT use vague phrases like "economic stabilization" or "market maturity" alone — always explain the specific mechanism: which policy, which sector dynamic, which regulatory change, which macroeconomic force, and why it applies to THIS fund in THAT year specifically.
 6. recent_news MUST contain AT LEAST 5 distinct news items. Draw from the news evidence provided AND from your training knowledge of recent events affecting this fund. Each item must have a real or realistic headline, a date (within the last 6 months), a 1-2 sentence summary, sentiment, and a source_url (use "" if unknown). Do NOT leave items blank.
+7. black_market_news MUST contain AT LEAST 3 items — cover sanctioned-nation asset flows (Iran/Russia/North Korea crypto/oil), shadow commodity markets, underground financial networks that affect this fund's sector. Use real known events + training knowledge. Include mechanism and fund_impact for each.
+8. bidding_activity MUST contain AT LEAST 3 items — cover recent treasury auctions, dark pool trading, commodity exchange auctions, or ETF arbitrage events relevant to this fund's asset class. Include bid-to-cover ratios or clearing yields where known.
 
 Return this exact JSON structure:
 {{
@@ -779,6 +784,76 @@ Return this exact JSON structure:
         "asset_class_affected": "",
         "impact": "",
         "example": ""
+      }}
+    ],
+    "black_market_news": [
+      {{
+        "headline": "",
+        "region": "",
+        "actors": "",
+        "asset_or_commodity": "",
+        "mechanism": "e.g. crypto tunnelling, hawala, ghost shipping, underground exchanges",
+        "estimated_volume": "",
+        "fund_impact": "",
+        "severity": "High|Medium|Low",
+        "date": "",
+        "source_url": ""
+      }},
+      {{
+        "headline": "",
+        "region": "",
+        "actors": "",
+        "asset_or_commodity": "",
+        "mechanism": "",
+        "estimated_volume": "",
+        "fund_impact": "",
+        "severity": "High|Medium|Low",
+        "date": "",
+        "source_url": ""
+      }},
+      {{
+        "headline": "",
+        "region": "",
+        "actors": "",
+        "asset_or_commodity": "",
+        "mechanism": "",
+        "estimated_volume": "",
+        "fund_impact": "",
+        "severity": "High|Medium|Low",
+        "date": "",
+        "source_url": ""
+      }}
+    ],
+    "bidding_activity": [
+      {{
+        "event": "",
+        "venue_or_exchange": "",
+        "asset": "",
+        "outcome": "e.g. bid-to-cover 2.3x, clearing yield 4.25%, heavy buying",
+        "sentiment": "Strong|Neutral|Weak",
+        "fund_relevance": "",
+        "date": "",
+        "source_url": ""
+      }},
+      {{
+        "event": "",
+        "venue_or_exchange": "",
+        "asset": "",
+        "outcome": "",
+        "sentiment": "Strong|Neutral|Weak",
+        "fund_relevance": "",
+        "date": "",
+        "source_url": ""
+      }},
+      {{
+        "event": "",
+        "venue_or_exchange": "",
+        "asset": "",
+        "outcome": "",
+        "sentiment": "Strong|Neutral|Weak",
+        "fund_relevance": "",
+        "date": "",
+        "source_url": ""
       }}
     ],
     "macro_political_risks": [

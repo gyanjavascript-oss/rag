@@ -982,6 +982,117 @@
 </div>
 {% endif %}
 
+<!-- Black Market News -->
+{% set bm_items = [] %}
+{% for b in geo.get('black_market_news', []) %}
+  {% if (b.get('headline') or '') | lower not in ['', 'unavailable', 'n/a', 'unknown'] %}
+    {% set _ = bm_items.append(b) %}
+  {% endif %}
+{% endfor %}
+{% if bm_items %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head" style="background:#1c1917;color:#fef3c7;border-bottom-color:#292524;">🕵️ Black Market & Shadow Economy News</div>
+  <div class="r-card-body" style="padding:0;background:#1c1917;border-radius:0 0 var(--radius) var(--radius);">
+    {% for b in bm_items %}
+    {% set sev = b.get('severity','Medium') %}
+    {% set url = b.get('source_url','') %}
+    {% set url_ok = url and url.startswith('http') %}
+    <div style="padding:.9rem 1.25rem;border-bottom:1px solid #292524;display:flex;gap:.85rem;align-items:flex-start;">
+      <span style="flex-shrink:0;margin-top:.15rem;
+        {% if sev == 'High' %}color:#f87171;{% elif sev == 'Low' %}color:#86efac;{% else %}color:#fbbf24;{% endif %}
+        font-size:.9rem;">●</span>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:flex-start;gap:.55rem;flex-wrap:wrap;margin-bottom:.3rem;">
+          {% if url_ok %}
+          <a href="{{ url }}" target="_blank" rel="noopener noreferrer"
+            style="font-size:.88rem;font-weight:600;color:#fbbf24;text-decoration:underline;text-underline-offset:2px;word-break:break-word;">
+            {{ b.get('headline') }} <span style="font-size:.72rem;opacity:.65;">↗</span>
+          </a>
+          {% else %}
+          <span style="font-size:.88rem;font-weight:600;color:#fbbf24;word-break:break-word;">{{ b.get('headline') }}</span>
+          {% endif %}
+          <span style="font-size:.68rem;font-weight:700;padding:.1rem .45rem;border-radius:3px;
+            {% if sev == 'High' %}background:#7f1d1d;color:#fca5a5;{% elif sev == 'Low' %}background:#14532d;color:#86efac;{% else %}background:#78350f;color:#fde68a;{% endif %}">
+            {{ sev }}
+          </span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:.4rem .85rem;margin-bottom:.3rem;">
+          {% if b.get('region') %}<span style="font-size:.75rem;color:#a8a29e;">📍 {{ b.get('region') }}</span>{% endif %}
+          {% if b.get('asset_or_commodity') %}<span style="font-size:.75rem;color:#a8a29e;">💰 {{ b.get('asset_or_commodity') }}</span>{% endif %}
+          {% if b.get('date') %}<span style="font-size:.75rem;color:#78716c;">{{ b.get('date') }}</span>{% endif %}
+        </div>
+        {% if b.get('mechanism') and (b.get('mechanism')|lower) not in ['','n/a','unavailable'] %}
+        <div style="font-size:.79rem;color:#a8a29e;margin-bottom:.25rem;"><span style="color:#78716c;font-weight:600;">Mechanism:</span> {{ b.get('mechanism') }}</div>
+        {% endif %}
+        {% if b.get('actors') and (b.get('actors')|lower) not in ['','n/a','unavailable'] %}
+        <div style="font-size:.79rem;color:#a8a29e;margin-bottom:.25rem;"><span style="color:#78716c;font-weight:600;">Actors:</span> {{ b.get('actors') }}</div>
+        {% endif %}
+        {% if b.get('estimated_volume') and (b.get('estimated_volume')|lower) not in ['','n/a','unavailable'] %}
+        <div style="font-size:.79rem;color:#a8a29e;margin-bottom:.25rem;"><span style="color:#78716c;font-weight:600;">Est. Volume:</span> {{ b.get('estimated_volume') }}</div>
+        {% endif %}
+        {% if b.get('fund_impact') and (b.get('fund_impact')|lower) not in ['','n/a','unavailable'] %}
+        <div style="font-size:.79rem;background:#292524;border-radius:4px;padding:.35rem .6rem;color:#d6d3d1;">
+          <strong style="color:#e7e5e4;">Fund Impact:</strong> {{ b.get('fund_impact') }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Bidding & Auction Activity -->
+{% set bid_items = [] %}
+{% for b in geo.get('bidding_activity', []) %}
+  {% if (b.get('event') or '') | lower not in ['', 'unavailable', 'n/a', 'unknown'] %}
+    {% set _ = bid_items.append(b) %}
+  {% endif %}
+{% endfor %}
+{% if bid_items %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">🔨 Bidding & Auction Market Activity</div>
+  <div class="r-card-body" style="padding:0;">
+    <table style="width:100%;border-collapse:collapse;font-size:.82rem;">
+      <thead>
+        <tr style="background:var(--bg2);">
+          <th style="padding:.5rem .85rem;text-align:left;font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);">Event</th>
+          <th style="padding:.5rem .65rem;text-align:left;font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);">Venue</th>
+          <th style="padding:.5rem .65rem;text-align:left;font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);">Asset</th>
+          <th style="padding:.5rem .65rem;text-align:left;font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);">Outcome</th>
+          <th style="padding:.5rem .65rem;text-align:center;font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);">Signal</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in bid_items %}
+        {% set sent = b.get('sentiment','Neutral') %}
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:.65rem .85rem;">
+            <div style="font-weight:600;color:var(--navy);">{{ b.get('event') }}</div>
+            {% if b.get('date') %}<div style="font-size:.72rem;color:var(--muted);">{{ b.get('date') }}</div>{% endif %}
+          </td>
+          <td style="padding:.65rem .65rem;color:var(--muted);">{{ b.get('venue_or_exchange','—') }}</td>
+          <td style="padding:.65rem .65rem;font-weight:500;color:var(--navy);">{{ b.get('asset','—') }}</td>
+          <td style="padding:.65rem .65rem;color:var(--muted);font-size:.8rem;">
+            {{ b.get('outcome','—') }}
+            {% if b.get('fund_relevance') and (b.get('fund_relevance')|lower) not in ['','n/a','unavailable'] %}
+            <div style="font-size:.75rem;color:var(--accent);margin-top:.2rem;">→ {{ b.get('fund_relevance') }}</div>
+            {% endif %}
+          </td>
+          <td style="padding:.65rem .65rem;text-align:center;">
+            <span style="font-size:.72rem;font-weight:700;padding:.2rem .5rem;border-radius:4px;
+              {% if sent == 'Strong' %}background:#d1fae5;color:#065f46;{% elif sent == 'Weak' %}background:#fee2e2;color:#991b1b;{% else %}background:#f1f5f9;color:#475569;{% endif %}">
+              {{ sent }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <!-- Macro Political Risks + Regulatory -->
 <div class="r-grid" style="margin-bottom:1.25rem;">
   {% set mpr = geo.get('macro_political_risks', []) | selectattr('risk') | list %}
