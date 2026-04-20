@@ -998,8 +998,8 @@
   <div style="display:none;background:#0f172a;border-radius:0 0 var(--radius) var(--radius);padding:.85rem 1.1rem;font-family:monospace;font-size:.76rem;max-height:380px;overflow-y:auto;display:flex;flex-direction:column;gap:.3rem;">
     {% for t in thoughts %}
     <div style="display:flex;gap:.5rem;">
-      <span style="flex-shrink:0;{% if t.get('phase')=='phase' %}color:#60a5fa;{% elif t.get('phase')=='think' %}color:#a78bfa;{% elif t.get('phase')=='search' %}color:#34d399;{% elif t.get('phase')=='browse' %}color:#fbbf24;{% else %}color:#6b7280;{% endif %}">
-        {% if t.get('phase')=='phase' %}◆{% elif t.get('phase')=='think' %}◎{% elif t.get('phase')=='search' %}⊹{% elif t.get('phase')=='browse' %}◫{% else %}·{% endif %}
+      <span style="flex-shrink:0;{% if t.get('phase')=='phase' %}color:#60a5fa;{% elif t.get('phase')=='think' %}color:#a78bfa;{% elif t.get('phase')=='search' %}color:#34d399;{% elif t.get('phase')=='browse' %}color:#fbbf24;{% elif t.get('phase')=='code' %}color:#c4b5fd;{% else %}color:#6b7280;{% endif %}">
+        {% if t.get('phase')=='phase' %}◆{% elif t.get('phase')=='think' %}◎{% elif t.get('phase')=='search' %}⊹{% elif t.get('phase')=='browse' %}◫{% elif t.get('phase')=='code' %}⌨{% else %}·{% endif %}
       </span>
       <span style="color:rgba(255,255,255,.75);">{{ t.get('text','') }}</span>
     </div>{% endfor %}
@@ -1135,6 +1135,7 @@ const PHASE_STYLE = {
   think:  { icon:'◎', color:'rgba(201,168,76,.6)', textColor:'rgba(255,255,255,.65)' },
   search: { icon:'⊹', color:'rgba(255,255,255,.5)', textColor:'rgba(255,255,255,.6)' },
   browse: { icon:'◫', color:'rgba(201,168,76,.45)', textColor:'rgba(255,255,255,.55)' },
+  code:   { icon:'⌨', color:'#a78bfa',              textColor:'rgba(200,180,255,.85)' },
   done:   { icon:'✓', color:'var(--gold)',          textColor:'rgba(255,255,255,.75)' },
 };
 
@@ -1202,8 +1203,12 @@ function _onThought(t) {
 
   if (phase === 'browse') {
     _browseCount++;
-    // Each browse = +1.2%
     _setPct(_pct + 1.2);
+  }
+
+  if (phase === 'code') {
+    // Code execution = more work = bigger bump
+    _setPct(_pct + 2.5);
   }
 
   if (phase === 'done') {

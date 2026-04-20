@@ -74,6 +74,44 @@ def _read_docx(filepath: str, char_limit: int = 8000) -> str:
         return f"[DOCX read failed: {e}]"
 
 
+def _run_code(code: str, timeout: int = 45) -> str:
+    """Execute Python code in an isolated subprocess and return stdout/stderr.
+    The agent can use requests, bs4, yfinance, pandas, pdfplumber, json, re, etc."""
+    import subprocess, tempfile, os, sys
+    # Prepend safe imports so agent code works out-of-the-box
+    header = (
+        "import sys, os, json, re, time, math\n"
+        "try: import requests\nexcept ImportError: pass\n"
+        "try: import pandas as pd\nexcept ImportError: pass\n"
+        "try: from bs4 import BeautifulSoup\nexcept ImportError: pass\n"
+        "try: import yfinance as yf\nexcept ImportError: pass\n"
+        "try: import pdfplumber, io\nexcept ImportError: pass\n"
+        "HEADERS = {'User-Agent': 'Mozilla/5.0 (compatible; ResearchAgent/1.0)'}\n\n"
+    )
+    full_code = header + code
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir='/tmp') as f:
+        f.write(full_code)
+        fname = f.name
+    try:
+        result = subprocess.run(
+            [sys.executable, fname],
+            capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        )
+        out = (result.stdout or "").strip()[:5000]
+        err = (result.stderr or "").strip()[:500]
+        if result.returncode != 0 and err:
+            return f"{out}\n[ERROR]: {err}" if out else f"[ERROR]: {err}"
+        return out or "[No output produced]"
+    except subprocess.TimeoutExpired:
+        return f"[Code timed out after {timeout}s]"
+    except Exception as e:
+        return f"[Code execution failed: {e}]"
+    finally:
+        try: os.unlink(fname)
+        except Exception: pass
+
+
 def _browse(url: str, char_limit: int = 4000) -> str:
     """Browse a URL — auto-routes PDFs to the PDF reader."""
     if url.lower().split("?")[0].endswith(".pdf"):
@@ -452,17 +490,41 @@ SOURCE STRATEGY:
 
 {CHECKLIST}
 
-Each step respond with JSON:
+Each step respond with JSON — choose ONE action:
+
+OPTION A — Web search:
 {{
   "reasoning": "what found so far, what is STILL MISSING from checklist",
   "found_items": ["checklist items confirmed this round"],
   "missing_items": ["checklist items still not found"],
   "new_sites_found": ["domain.com"],
   "source_urls": [{{"url":"","title":"","type":"filing|financial|news|registry|tax|other"}}],
+  "action": "search",
   "search_query": "next search query",
   "query_type": "financials|stock|filings|tax|compliance|news|clients|competitors|gaps",
   "done": false
 }}
+
+OPTION B — Write and run Python code (use when web search is insufficient):
+{{
+  "reasoning": "why code is needed and what it will do",
+  "found_items": [],
+  "missing_items": ["what this code targets"],
+  "new_sites_found": [],
+  "source_urls": [],
+  "action": "code",
+  "code": "# Python code here\\nimport yfinance as yf\\n...",
+  "code_purpose": "one line: what data this extracts",
+  "done": false
+}}
+
+Use code action when:
+- A financial data API (yfinance, screener.in API) can get exact numbers
+- You need to parse a specific page structure or extract tables
+- Direct HTTP fetch of a known URL will be faster/more reliable
+- You need to do calculations or transformations on raw data
+Available in code: requests, BeautifulSoup, yfinance, pandas, pdfplumber, json, re
+
 Only set done=true when ALL checklist items are attempted (minimum {min(MAX_ROUNDS-2, 14)} rounds)."""
 
     messages = [
@@ -505,6 +567,28 @@ Only set done=true when ALL checklist items are attempted (minimum {min(MAX_ROUN
             _log("done", f"Research complete after {round_num} rounds.")
             break
 
+        act_type = action.get("action", "search")  # default to search for backwards compat
+
+        # ── CODE action ───────────────────────────────────────────────────────
+        if act_type == "code":
+            code = action.get("code","").strip()
+            purpose = action.get("code_purpose","run code")
+            if not code:
+                _log("think", "Code action but no code provided — skipping.")
+                messages.append({"role":"user","content":f"Round {round_num}/{MAX_ROUNDS}: No code provided. Try a search or write valid code."})
+                continue
+            _log("code", f"[{round_num}/{MAX_ROUNDS}] {purpose}")
+            code_output = _run_code(code)
+            _log("think", f"Code output ({len(code_output)} chars): {code_output[:200]}…" if len(code_output) > 200 else f"Code output: {code_output}")
+            if code_output and not code_output.startswith("[ERROR") and not code_output.startswith("[Code"):
+                browsed_pages.append(f"[CODE OUTPUT] PURPOSE: {purpose}\n{code_output[:4000]}")
+            obs = (f"ROUND {round_num} CODE RESULT [{purpose}]:\n\n{code_output[:3000]}\n\n"
+                   f"Round {round_num}/{MAX_ROUNDS} done. What did you learn? What is STILL MISSING? Next action?")
+            messages.append({"role":"user","content":obs})
+            time.sleep(0.3)
+            continue
+
+        # ── SEARCH action ─────────────────────────────────────────────────────
         query = action.get("search_query","").strip()
         if not query:
             _log("think", "No query returned — skipping round.")
@@ -527,7 +611,6 @@ Only set done=true when ALL checklist items are attempted (minimum {min(MAX_ROUN
                     discovered_sites.append(d)
             except Exception:
                 pass
-            # auto-collect URLs as references
             if u and u.startswith("http") and u not in [x["url"] for x in all_source_urls]:
                 all_source_urls.append({"url": u, "title": r.get("title",""), "type": q_type})
             if q_type in ("news",):
@@ -551,7 +634,7 @@ Only set done=true when ALL checklist items are attempted (minimum {min(MAX_ROUN
             obs += f"\n\nFULL PAGE ({top_url}):\n{page_text[:1500]}"
         if discovered_sites:
             obs += f"\n\nDISCOVERED SOURCES SO FAR: {', '.join(discovered_sites[-12:])}"
-        obs += f"\n\nRound {round_num}/{MAX_ROUNDS} done. What checklist items found? What is STILL MISSING? Next query?"
+        obs += f"\n\nRound {round_num}/{MAX_ROUNDS} done. What checklist items found? What is STILL MISSING? Next action?"
         messages.append({"role":"user","content":obs})
 
     # Save learnings
@@ -967,7 +1050,75 @@ def _targeted_research(company_name: str, ticker: str, sector: str,
                     extra_evidence.append(f"[RETRY] SOURCE: {url}\n{page[:3000]}")
                 time.sleep(0.3)
 
-    # Step 4: Ask LLM to suggest more specific queries for anything still lacking
+    # Step 4: Code execution for financial data — yfinance / direct scrape
+    if ticker:
+        _log("code", f"[Retry] Fetching live data via code for {ticker}…")
+        code_snippets = [
+            # yfinance
+            f"""
+import json
+try:
+    import yfinance as yf
+    t = yf.Ticker("{ticker}")
+    info = t.info
+    keep = ["longName","longBusinessSummary","fullTimeEmployees","industryKey","sectorKey",
+            "website","country","city","phone","ceo","companyOfficers",
+            "totalRevenue","revenueGrowth","netIncomeToCommon","profitMargins","ebitda",
+            "debtToEquity","currentRatio","trailingPE","trailingEps","dividendYield",
+            "returnOnEquity","returnOnAssets","marketCap","currentPrice","beta",
+            "fiftyTwoWeekHigh","fiftyTwoWeekLow","sharesOutstanding","floatShares",
+            "heldPercentInsiders","heldPercentInstitutions","previousClose","regularMarketPrice"]
+    filtered = {{k:v for k,v in info.items() if k in keep and v is not None}}
+    print(json.dumps(filtered, default=str))
+    # Also get 5-year income statement
+    fin = t.financials
+    if fin is not None and not fin.empty:
+        rev_rows = fin.loc["Total Revenue"] if "Total Revenue" in fin.index else None
+        ni_rows  = fin.loc["Net Income"] if "Net Income" in fin.index else None
+        if rev_rows is not None:
+            print("\\nANNUAL REVENUE:")
+            for col in fin.columns:
+                yr = str(col)[:4]
+                rev = rev_rows.get(col,"")
+                ni  = ni_rows.get(col,"") if ni_rows is not None else ""
+                print(f"  {{yr}}: Revenue={{rev}}, NetIncome={{ni}}")
+except Exception as e:
+    print(f"yfinance error: {{e}}")
+""",
+            # screener.in for Indian stocks
+            f"""
+import requests
+from bs4 import BeautifulSoup
+try:
+    url = f"https://www.screener.in/company/{ticker}/consolidated/"
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    # Extract key ratios
+    ratios = soup.find('div', id='top-ratios')
+    if ratios:
+        print("KEY RATIOS (screener.in):")
+        for li in ratios.find_all('li'):
+            print(' ', li.get_text(separator=' ', strip=True))
+    # Extract profit/loss table
+    pl = soup.find('section', id='profit-loss')
+    if pl:
+        print("\\nPROFIT & LOSS:")
+        rows = pl.find_all('tr')
+        for row in rows[:10]:
+            print(' ', row.get_text(separator='|', strip=True))
+except Exception as e:
+    print(f"screener.in error: {{e}}")
+""",
+        ]
+        for code in code_snippets:
+            out = _run_code(code)
+            if out and not out.startswith("[ERROR") and not out.startswith("[Code") and len(out) > 20:
+                extra_evidence.append(f"[CODE-DATA] TICKER: {ticker}\n{out[:4000]}")
+                _log("think", f"[Retry] Code fetched {len(out)} chars of live data")
+                break  # good data from first snippet — no need for second
+        time.sleep(0.5)
+
+    # Step 5: Ask LLM to suggest more specific queries for anything still lacking
     if missing_fields:
         try:
             client, model = _get_client()
