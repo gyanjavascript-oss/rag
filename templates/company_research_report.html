@@ -952,67 +952,108 @@ function renderThoughts(thoughts) {
   });
 }
 
+// ── Progress driven entirely by real thought events ──────────────────────────
 let _pct = 0;
-function _setPct(p) {
-  _pct = Math.min(100, p);
+function _setPct(p, animate) {
+  _pct = Math.min(99, Math.max(_pct, p));   // never go backwards, never reach 100 until truly done
   const fill = document.getElementById('overlayFill');
   const lbl  = document.getElementById('sciPct');
-  if (fill) fill.style.width = _pct + '%';
-  if (lbl)  lbl.textContent  = Math.round(_pct) + '%';
+  if (fill) {
+    fill.style.transition = animate === false ? 'none' : 'width 0.6s ease';
+    fill.style.width = _pct + '%';
+  }
+  if (lbl) lbl.textContent = Math.round(_pct) + '%';
 }
 
-const STEPS = ['Discovering data sources…','Searching financials…','Reading filings…','Checking social media…','Analysing reviews…','Fetching news…','Building score…','Writing report…'];
+// Phase anchors: when a thought matching the keyword arrives, jump to that %
+const PHASE_ANCHORS = [
+  { match: /research agent starting/i,            pct: 5  },
+  { match: /discovering data sources/i,           pct: 8  },
+  { match: /government filings.*agent/i,          pct: 35 },
+  { match: /social media.*sentiment/i,            pct: 58 },
+  { match: /reading uploaded/i,                   pct: 67 },
+  { match: /all evidence gathered/i,              pct: 72 },
+  { match: /building company report/i,            pct: 78 },
+  { match: /research complete/i,                  pct: 74 },
+];
+
+// Within a phase, each search/browse bumps the bar a little
+let _searchCount = 0, _browseCount = 0;
+
+function _onThought(t) {
+  const text = (t.text || '').toLowerCase();
+  const phase = t.phase;
+
+  if (phase === 'phase') {
+    for (const anchor of PHASE_ANCHORS) {
+      if (anchor.match.test(text)) { _setPct(anchor.pct); return; }
+    }
+  }
+
+  if (phase === 'search') {
+    _searchCount++;
+    // Each search = +1.5% up to the next phase anchor ceiling
+    _setPct(_pct + 1.5);
+  }
+
+  if (phase === 'browse') {
+    _browseCount++;
+    // Each browse = +1.2%
+    _setPct(_pct + 1.2);
+  }
+
+  if (phase === 'done') {
+    _setPct(95);
+  }
+}
 
 function showOverlay() {
   const overlay = document.getElementById('genOverlay');
-  const box = document.getElementById('thoughtsBox');
-  const stepEl = document.getElementById('overlayStep');
-  if (box) box.innerHTML = '<div class="ov-log-hdr">Agent Thinking</div>';
+  const box     = document.getElementById('thoughtsBox');
+  const stepEl  = document.getElementById('overlayStep');
+  if (box)    box.innerHTML = '<div class="ov-log-hdr">Agent Thinking</div>';
   if (stepEl) stepEl.innerHTML = 'Initialising research agent<span class="ov-cursor">|</span>';
-  _setPct(0);
-  const fill = document.getElementById('overlayFill');
-  if (fill) { fill.style.transition='none'; fill.style.width='0%'; }
+  _pct = 0; _searchCount = 0; _browseCount = 0;
+  _setPct(2, false);
   overlay.classList.add('active');
   document.body.style.overflow = 'hidden';
-  let idx = 0;
-  const perStep = 100 / STEPS.length;
-  function advance() { idx++; if(fill) fill.style.transition='width 7s linear'; _setPct(idx*perStep); }
-  advance();
-  return setInterval(advance, 9000);
 }
 
-function hideOverlay(timer) {
-  clearInterval(timer);
+function hideOverlay() {
   _setPct(100);
   setTimeout(() => {
     document.getElementById('genOverlay').classList.remove('active');
     document.body.style.overflow = '';
-  }, 600);
+  }, 700);
 }
 
-let _pollOffset = 0, _pollTimer = null, _advTimer = null;
+let _pollOffset = 0, _pollTimer = null;
 
 function generateReport() {
-  _advTimer = showOverlay();
+  showOverlay();
   _pollOffset = 0;
   fetch('/api/company-research/{{ company.id }}/generate', { method:'POST' })
     .then(r => r.json())
-    .then(d => { if (d.job_id) _pollTimer = setInterval(() => pollJob(d.job_id), 2500); })
-    .catch(e => { hideOverlay(_advTimer); alert('Error: ' + e.message); });
+    .then(d => { if (d.job_id) _pollTimer = setInterval(() => pollJob(d.job_id), 2000); })
+    .catch(e => { hideOverlay(); alert('Error: ' + e.message); });
 }
 
 function pollJob(jobId) {
   fetch(`/api/company-research/job/${jobId}?offset=${_pollOffset}`)
     .then(r => r.json())
     .then(d => {
-      if (d.thoughts && d.thoughts.length) { renderThoughts(d.thoughts); _pollOffset += d.thoughts.length; }
+      if (d.thoughts && d.thoughts.length) {
+        d.thoughts.forEach(_onThought);
+        renderThoughts(d.thoughts);
+        _pollOffset += d.thoughts.length;
+      }
       if (d.status === 'done') {
         clearInterval(_pollTimer);
-        hideOverlay(_advTimer);
-        setTimeout(() => location.reload(), 400);
+        hideOverlay();
+        setTimeout(() => location.reload(), 500);
       } else if (d.status === 'error') {
         clearInterval(_pollTimer);
-        hideOverlay(_advTimer);
+        hideOverlay();
         alert('Error: ' + (d.error || 'Unknown error'));
       }
     });
