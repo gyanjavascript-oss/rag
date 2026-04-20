@@ -339,7 +339,7 @@
         {% for label,_ in valid_sp %}<th style="padding:.4rem .75rem;text-align:left;font-size:.7rem;font-weight:600;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);">{{ label }}</th>{% endfor %}
       </tr></thead>
       <tbody><tr>{% for label,val in valid_sp %}
-        <td style="padding:.5rem .75rem;font-weight:600;color:{% if val and val[0:1]=='-' %}#dc2626{% elif val and val[0:1]=='+' %}#059669{% else %}var(--navy){% endif %};">{{ val }}</td>
+        <td style="padding:.5rem .75rem;font-weight:600;color:{% set sv = val|string %}{% if sv and sv[0:1]=='-' %}#dc2626{% elif sv and sv[0:1]=='+' %}#059669{% else %}var(--navy){% endif %};">{{ val }}</td>
       {% endfor %}</tr></tbody>
     </table>
   </div>
