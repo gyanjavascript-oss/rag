@@ -550,6 +550,19 @@ def init_db():
                 UNIQUE(company_id)
             )
         """)
+        # Company private documents (uploaded by user)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS company_documents (
+                id          SERIAL PRIMARY KEY,
+                company_id  INTEGER NOT NULL REFERENCES company_watchlist(id) ON DELETE CASCADE,
+                filename    TEXT NOT NULL,
+                filepath    TEXT NOT NULL,
+                doc_type    TEXT NOT NULL DEFAULT 'other',
+                uploaded_by INTEGER,
+                uploaded_at TIMESTAMP DEFAULT NOW(),
+                deleted_at  TIMESTAMP
+            )
+        """)
         # Company research agent memory
         cur.execute("""
             CREATE TABLE IF NOT EXISTS company_research_memory (

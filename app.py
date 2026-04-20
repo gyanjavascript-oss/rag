@@ -4,6 +4,7 @@ DDQ Platform - Main Flask Application
 import os
 import json
 import uuid
+import time
 from functools import wraps
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -2301,6 +2302,71 @@ def api_company_research_job(job_id):
     thoughts = job.get("thoughts", [])
     return jsonify({"status": job["status"], "error": job.get("error"),
                     "thoughts": thoughts[offset:], "total": len(thoughts)})
+
+
+ALLOWED_DOC_EXTENSIONS = {".pdf", ".docx", ".txt", ".xlsx", ".csv"}
+CR_DOCS_DIR = os.path.join(os.path.dirname(__file__), "company_docs")
+os.makedirs(CR_DOCS_DIR, exist_ok=True)
+
+@app.route("/company-research/<int:cid>/docs/upload", methods=["POST"])
+@login_required
+def company_research_doc_upload(cid):
+    conn = db.get_db()
+    co = conn.execute("SELECT id FROM company_watchlist WHERE id=%s AND deleted_at IS NULL", (cid,)).fetchone()
+    db.put_db(conn)
+    if not co:
+        return jsonify({"error": "Company not found"}), 404
+
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file provided"}), 400
+
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in ALLOWED_DOC_EXTENSIONS:
+        return jsonify({"error": f"File type {ext} not allowed"}), 400
+
+    safe_name = secure_filename(f.filename)
+    dest = os.path.join(CR_DOCS_DIR, f"co{cid}_{uuid.uuid4().hex[:8]}_{safe_name}")
+    f.save(dest)
+
+    doc_type = request.form.get("doc_type", "other")
+    user = _current_user()
+    conn2 = db.get_db()
+    conn2.execute(
+        "INSERT INTO company_documents (company_id, filename, filepath, doc_type, uploaded_by) VALUES (%s,%s,%s,%s,%s)",
+        (cid, safe_name, dest, doc_type, user["id"])
+    )
+    conn2.commit()
+    db.put_db(conn2)
+    return jsonify({"ok": True, "filename": safe_name})
+
+
+@app.route("/company-research/<int:cid>/docs/<int:doc_id>/delete", methods=["POST"])
+@login_required
+def company_research_doc_delete(cid, doc_id):
+    conn = db.get_db()
+    row = conn.execute("SELECT filepath FROM company_documents WHERE id=%s AND company_id=%s", (doc_id, cid)).fetchone()
+    if row:
+        conn.execute("UPDATE company_documents SET deleted_at=NOW() WHERE id=%s", (doc_id,))
+        conn.commit()
+        try:
+            os.remove(row["filepath"])
+        except Exception:
+            pass
+    db.put_db(conn)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/company-research/<int:cid>/docs")
+@login_required
+def api_company_research_docs(cid):
+    conn = db.get_db()
+    rows = conn.execute(
+        "SELECT id, filename, doc_type, uploaded_at FROM company_documents WHERE company_id=%s AND deleted_at IS NULL ORDER BY uploaded_at DESC",
+        (cid,)
+    ).fetchall()
+    db.put_db(conn)
+    return jsonify([dict(r) for r in rows])
 
 
 if __name__ == "__main__":

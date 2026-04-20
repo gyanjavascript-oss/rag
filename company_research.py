@@ -29,7 +29,55 @@ def _web_search(query: str, max_results: int = 6) -> list:
         return [{"error": str(e)}]
 
 
+def _read_pdf(url: str, max_pages: int = 15, char_limit: int = 6000) -> str:
+    """Download and extract text from a PDF URL."""
+    try:
+        import requests, io, pdfplumber
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; CompanyResearch/1.0)"}
+        resp = requests.get(url, headers=headers, timeout=30, stream=True)
+        resp.raise_for_status()
+        data = io.BytesIO(resp.content)
+        parts = []
+        with pdfplumber.open(data) as pdf:
+            for i, page in enumerate(pdf.pages[:max_pages]):
+                text = page.extract_text() or ""
+                if text.strip():
+                    parts.append(f"[Page {i+1}]\n{text.strip()}")
+        return "\n\n".join(parts)[:char_limit] if parts else "[PDF: no text extracted]"
+    except Exception as e:
+        return f"[PDF read failed: {e}]"
+
+
+def _read_local_pdf(filepath: str, char_limit: int = 8000) -> str:
+    """Extract text from a locally stored PDF file."""
+    try:
+        import pdfplumber
+        parts = []
+        with pdfplumber.open(filepath) as pdf:
+            for i, page in enumerate(pdf.pages[:20]):
+                text = page.extract_text() or ""
+                if text.strip():
+                    parts.append(f"[Page {i+1}]\n{text.strip()}")
+        return "\n\n".join(parts)[:char_limit] if parts else "[PDF: no text extracted]"
+    except Exception as e:
+        return f"[Local PDF read failed: {e}]"
+
+
+def _read_docx(filepath: str, char_limit: int = 8000) -> str:
+    """Extract text from a .docx file."""
+    try:
+        from docx import Document
+        doc = Document(filepath)
+        text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        return text[:char_limit]
+    except Exception as e:
+        return f"[DOCX read failed: {e}]"
+
+
 def _browse(url: str, char_limit: int = 4000) -> str:
+    """Browse a URL — auto-routes PDFs to the PDF reader."""
+    if url.lower().split("?")[0].endswith(".pdf"):
+        return _read_pdf(url, char_limit=char_limit)
     try:
         from playwright.sync_api import sync_playwright
         from bs4 import BeautifulSoup
@@ -37,7 +85,12 @@ def _browse(url: str, char_limit: int = 4000) -> str:
             browser = pw.chromium.launch(headless=True)
             page = browser.new_page()
             page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (compatible; CompanyResearch/1.0)"})
-            page.goto(url, timeout=18000, wait_until="domcontentloaded")
+            resp = page.goto(url, timeout=18000, wait_until="domcontentloaded")
+            # Check if server returned PDF content-type
+            ct = (resp.headers.get("content-type","") if resp else "") if resp else ""
+            if "pdf" in ct.lower():
+                browser.close()
+                return _read_pdf(url, char_limit=char_limit)
             html = page.content()
             browser.close()
         soup = BeautifulSoup(html, "html.parser")
@@ -136,6 +189,144 @@ When done: {{"reasoning":"","search_query":"","query_type":"other","done":true}}
         observation = f"RESULTS: {query}\n\n" + "\n\n".join(snippets[:5])
         observation += "\n\nWhat should you search next, or are you done?"
         messages.append({"role":"user","content":observation})
+
+    return evidence
+
+
+# ── Government filings / audit agent loop ────────────────────────────────────
+
+def _govt_filings_agent_loop(company_name: str, ticker: str, sector: str,
+                              country: str, current_year: int, log=None) -> list:
+    """Dedicated agent for finding and reading official government documents,
+    audit reports, regulatory filings and annual reports as PDFs."""
+    client, model = _get_client()
+    MAX_ROUNDS = 8
+    evidence, search_history = [], []
+
+    def _log(p, t):
+        if log: log(p, t)
+
+    # Country-to-portal hints (agent discovers more dynamically)
+    PORTAL_HINTS = {
+        "USA": "SEC EDGAR (edgar.sec.gov), PCAOB, FTC filings",
+        "UK": "Companies House (find-and-update.company-information.service.gov.uk), FCA register",
+        "India": "BSE (bseindia.com), NSE (nseindia.com), MCA (mca.gov.in), SEBI",
+        "Canada": "SEDAR+ (sedarplus.ca), OSFI",
+        "Australia": "ASIC (asic.gov.au), ASX (asx.com.au)",
+        "Germany": "Bundesanzeiger (bundesanzeiger.de), BaFin",
+        "France": "AMF (amf-france.org), Infogreffe",
+        "Japan": "EDINET (edinet-fsa.go.jp), TSE",
+        "China": "CSRC, CNINFO (cninfo.com.cn), SSE/SZSE",
+        "Singapore": "SGX (sgx.com), ACRA (bizfile.gov.sg)",
+        "Hong Kong": "HKEX (hkex.com.hk), SFC",
+    }
+    portal_hint = PORTAL_HINTS.get(country, f"national stock exchange and company registry of {country}")
+
+    system = f"""You are a regulatory research specialist finding official government documents for {company_name} ({ticker or sector}, {country}).
+
+YOUR GOAL: Find and read actual PDF annual reports, audit reports, financial statements and regulatory filings.
+
+PORTALS TO CHECK FOR {country.upper()}:
+{portal_hint}
+
+WHAT TO FIND:
+1. Latest annual report / 10-K / 20-F (full PDF preferred)
+2. Auditor's report and opinion (qualified/unqualified)
+3. Any government contracts, grants, tenders
+4. Regulatory actions, fines, sanctions, warnings
+5. Tax compliance filings
+6. Environmental/ESG regulatory disclosures
+7. Bankruptcy or insolvency filings
+8. Board composition and governance disclosures
+
+STRATEGY:
+- Search for "{company_name} annual report {current_year} PDF site:{portal_hint.split('(')[-1].split(')')[0] if '(' in portal_hint else country.lower()}"
+- When you find a direct PDF link, ALWAYS browse it — the agent will extract the text
+- Search for audit opinions specifically: "{company_name} auditor report qualified opinion"
+- Search govt contract databases: "{company_name} government contract award"
+
+Each step respond with JSON:
+{{"reasoning":"","search_query":"","query_type":"annual_report|audit|govt_contract|regulatory|filing","pdf_url":"","done":false}}
+When done: {{"reasoning":"","search_query":"","query_type":"other","pdf_url":"","done":true}}"""
+
+    messages = [
+        {"role":"system","content":system},
+        {"role":"user","content":f"Start government filing research for {company_name} ({country}) for year {current_year}. Find official documents and PDFs."}
+    ]
+    _log("phase", f"Government filings & audit agent starting for {company_name}…")
+
+    for round_num in range(MAX_ROUNDS):
+        try:
+            resp = client.chat.completions.create(
+                model=model, messages=messages, max_tokens=400,
+                response_format={"type":"json_object"}
+            )
+            raw = resp.choices[0].message.content or "{}"
+            action = json.loads(raw)
+        except Exception:
+            break
+
+        messages.append({"role":"assistant","content":raw})
+        if action.get("reasoning"):
+            _log("think", action["reasoning"])
+        if action.get("done"):
+            _log("done", "Government filings research complete.")
+            break
+
+        # If agent suggests a direct PDF URL, read it immediately
+        pdf_url = action.get("pdf_url","").strip()
+        if pdf_url and pdf_url.startswith("http"):
+            _log("browse", f"Reading PDF: {pdf_url}")
+            pdf_text = _read_pdf(pdf_url, max_pages=20, char_limit=7000)
+            if pdf_text and not pdf_text.startswith("[PDF"):
+                evidence.append(f"[GOVT PDF] SOURCE: {pdf_url}\n{pdf_text}")
+            messages.append({"role":"user","content":f"PDF content from {pdf_url}:\n{pdf_text[:2000]}\n\nWhat next?"})
+            continue
+
+        query = action.get("search_query","").strip()
+        if not query or query in search_history:
+            break
+        search_history.append(query)
+        q_type = action.get("query_type","filing")
+        _log("search", f"[Filings] {query}")
+
+        results = _web_search(query, max_results=6)
+        snippets = []
+        pdf_found = None
+        for r in results:
+            url = r.get("url","")
+            snippets.append(f"[{r.get('title','')}] {r.get('snippet','')}\nURL: {url}")
+            # Prioritise direct PDF links
+            if url.lower().endswith(".pdf") and not pdf_found:
+                pdf_found = url
+
+        if pdf_found:
+            _log("browse", f"Reading PDF: {pdf_found}")
+            pdf_text = _read_pdf(pdf_found, max_pages=20, char_limit=7000)
+            if pdf_text and not pdf_text.startswith("[PDF"):
+                evidence.append(f"[GOVT PDF] SOURCE: {pdf_found}\nTYPE: {q_type}\n{pdf_text}")
+            obs = f"PDF read from {pdf_found}:\n{pdf_text[:1500]}\n\nSearch results:\n" + "\n".join(snippets[:3])
+        else:
+            # Browse top non-PDF result
+            top_url = next((r.get("url","") for r in results if r.get("url","").startswith("http") and "google" not in r.get("url","")), "")
+            page_text = ""
+            if top_url:
+                _log("browse", f"Reading: {top_url}")
+                page_text = _browse(top_url, char_limit=3000)
+                if page_text and not page_text.startswith("[Browse failed"):
+                    evidence.append(f"[GOVT FILING] SOURCE: {top_url}\nTYPE: {q_type}\n{page_text[:2500]}")
+
+            # Look for PDF links within the browsed page
+            pdf_links = [l for l in page_text.split("\n") if ".pdf" in l.lower() and "http" in l.lower()] if page_text else []
+            obs = f"RESULTS: {query}\n\n" + "\n".join(snippets[:4])
+            if page_text and not page_text.startswith("[Browse failed"):
+                obs += f"\n\nPAGE ({top_url}):\n{page_text[:1200]}"
+            if pdf_links:
+                obs += f"\n\nPDF LINKS FOUND: {pdf_links[:3]}"
+
+        obs += "\n\nAny PDF annual reports or audit documents found? What to search next?"
+        messages.append({"role":"user","content":obs})
+        time.sleep(0.3)
 
     return evidence
 
@@ -336,7 +527,47 @@ Return JSON:
 
 # ── Gather all evidence ───────────────────────────────────────────────────────
 
-def _gather_evidence(company_name: str, ticker: str, sector: str, country: str, log=None) -> dict:
+def _read_uploaded_docs(company_id: int, log=None) -> list:
+    """Read all uploaded private documents for a company."""
+    def _log(p, t):
+        if log: log(p, t)
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT filename, filepath, doc_type FROM company_documents WHERE company_id=%s AND deleted_at IS NULL ORDER BY uploaded_at DESC",
+            (company_id,)
+        ).fetchall()
+    except Exception:
+        return []
+    finally:
+        put_db(conn)
+
+    results = []
+    for row in rows:
+        filepath = row["filepath"]
+        filename = row["filename"]
+        doc_type = row.get("doc_type","document")
+        _log("browse", f"Reading uploaded document: {filename}")
+        try:
+            if filename.lower().endswith(".pdf"):
+                text = _read_local_pdf(filepath, char_limit=8000)
+            elif filename.lower().endswith(".docx"):
+                text = _read_docx(filepath, char_limit=8000)
+            elif filename.lower().endswith(".txt"):
+                with open(filepath, "r", errors="ignore") as f:
+                    text = f.read(8000)
+            else:
+                continue
+            if text and not text.startswith("["):
+                results.append(f"[UPLOADED DOC] FILE: {filename} TYPE: {doc_type}\n{text}")
+                _log("think", f"Loaded {len(text)} chars from {filename}")
+        except Exception as e:
+            _log("think", f"Could not read {filename}: {e}")
+    return results
+
+
+def _gather_evidence(company_name: str, ticker: str, sector: str, country: str,
+                     company_id: int = None, log=None) -> dict:
     import datetime
     current_year = datetime.date.today().year
     current_month = datetime.date.today().strftime("%B %Y")
@@ -345,13 +576,25 @@ def _gather_evidence(company_name: str, ticker: str, sector: str, country: str, 
         if log: log(p, t)
 
     evidence = _research_agent_loop(company_name, ticker, sector, country, current_year, current_month, log=log)
+
+    _log("phase", "Starting government filings & audit document research…")
+    govt_pages = _govt_filings_agent_loop(company_name, ticker, sector, country, current_year, log=log)
+
     _log("phase", "Starting social media & sentiment research…")
     social = _social_agent_loop(company_name, ticker, sector, current_year, current_month, log=log)
+
+    # Read uploaded private documents
+    uploaded = []
+    if company_id:
+        _log("phase", "Reading uploaded private documents…")
+        uploaded = _read_uploaded_docs(company_id, log=log)
+        if uploaded:
+            _log("think", f"Loaded {len(uploaded)} private document(s) into evidence.")
 
     return {
         "search_results": evidence["search_results"],
         "news_results": evidence["news_results"],
-        "browsed_pages": evidence["browsed_pages"] + social,
+        "browsed_pages": evidence["browsed_pages"] + govt_pages + social + uploaded,
     }
 
 
@@ -396,7 +639,7 @@ def generate_report(company_id: int, log=None) -> dict:
     country = co.get("country") or ""
 
     _log("phase", f"Starting research for {company_name}…")
-    ev = _gather_evidence(company_name, ticker, sector, country, log=log)
+    ev = _gather_evidence(company_name, ticker, sector, country, company_id=company_id, log=log)
     evidence_text = _build_evidence_text(ev)
 
     _log("phase", "All evidence gathered. Building company report with AI…")
@@ -415,6 +658,9 @@ CRITICAL RULES:
 5. customer_reviews positive_themes and negative_themes must each have 3-5 real points.
 6. financial score weights: revenue_growth 25%, profitability 25%, debt_health 20%, efficiency 15%, valuation 15%.
 7. investment_verdict: "Strong Buy|Buy|Hold|Sell|Avoid" based on overall_score (80+=Strong Buy, 65+=Buy, 45+=Hold, 30+=Sell, <30=Avoid).
+8. Evidence marked [GOVT PDF] or [UPLOADED DOC] is highly authoritative — prioritise these over web snippets.
+9. If auditor's report is found, extract the audit opinion (unqualified/qualified/adverse) and note it in key_filing_highlights.
+10. If govt contracts or regulatory fines are found in evidence, populate govt_contracts and regulatory_actions arrays.
 
 Return this exact JSON:
 {{

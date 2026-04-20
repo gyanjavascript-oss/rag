@@ -548,6 +548,38 @@
 </div>
 {% endif %}
 
+<!-- Private Documents -->
+<div class="r-card" style="margin-bottom:1.25rem;" id="docsCard">
+  <div class="r-card-head" style="justify-content:space-between;">
+    <span>📎 Private Documents</span>
+    <span style="font-size:.72rem;color:var(--muted);font-weight:400;">PDFs, reports & audit files used in this analysis</span>
+  </div>
+  <div class="r-card-body">
+    <div id="docsList" style="margin-bottom:.85rem;display:flex;flex-direction:column;gap:.4rem;"></div>
+    <form id="docUploadForm" style="display:flex;align-items:flex-end;gap:.65rem;flex-wrap:wrap;">
+      <div class="field-group" style="flex:2;min-width:180px;margin-bottom:0;">
+        <label style="font-size:.75rem;">Document</label>
+        <input type="file" id="docFile" accept=".pdf,.docx,.txt,.xlsx,.csv"
+               style="padding:.45rem .6rem;border:1px solid var(--border);border-radius:6px;width:100%;font-size:.82rem;background:var(--white);">
+      </div>
+      <div class="field-group" style="flex:1;min-width:130px;margin-bottom:0;">
+        <label style="font-size:.75rem;">Type</label>
+        <select id="docType" style="padding:.5rem .6rem;border:1px solid var(--border);border-radius:6px;width:100%;font-size:.82rem;">
+          <option value="annual_report">Annual Report</option>
+          <option value="audit_report">Audit Report</option>
+          <option value="govt_filing">Govt Filing</option>
+          <option value="financial_statement">Financial Statement</option>
+          <option value="contract">Contract</option>
+          <option value="prospectus">Prospectus</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <button type="button" class="btn-primary btn-sm" onclick="uploadDoc()" id="docUploadBtn" style="margin-bottom:0;">Upload</button>
+    </form>
+    <div style="font-size:.72rem;color:var(--muted);margin-top:.5rem;">Uploaded documents are read by the AI agent on the next report generation.</div>
+  </div>
+</div>
+
 <!-- Agent Thinking -->
 {% set thoughts = report.get('_agent_thoughts',[]) %}
 {% if thoughts %}
@@ -615,7 +647,8 @@
 
 <script>
 // ── Charts ────────────────────────────────────────────
-{% if cs.get('financial_score') %}
+{% if report and report.get('company_score',{}).get('financial_score') %}
+{% set _cs = report.get('company_score',{}) %}
 new Chart(document.getElementById('radarChart'), {
   type: 'radar',
   data: {
@@ -623,12 +656,12 @@ new Chart(document.getElementById('radarChart'), {
     datasets: [{
       label: '{{ company.company_name | tojson }}',
       data: [
-        {{ cs.get('financial_score',0) }},
-        {{ cs.get('sentiment_score',0) }},
-        {{ cs.get('growth_score',0) }},
-        {{ cs.get('customer_score',0) }},
-        {{ cs.get('management_score',0) }},
-        {{ cs.get('risk_score',0) }}
+        {{ _cs.get('financial_score',0) }},
+        {{ _cs.get('sentiment_score',0) }},
+        {{ _cs.get('growth_score',0) }},
+        {{ _cs.get('customer_score',0) }},
+        {{ _cs.get('management_score',0) }},
+        {{ _cs.get('risk_score',0) }}
       ],
       backgroundColor: 'rgba(201,168,76,.15)',
       borderColor: '#c9a84c',
@@ -644,10 +677,19 @@ new Chart(document.getElementById('radarChart'), {
 });
 {% endif %}
 
-{% if rev_years %}
+{% if report %}
+{% set _fp = report.get('financial_performance',{}) %}
+{% set _rev_years = [] %}{% set _rev_vals = [] %}
+{% for r in _fp.get('annual_revenue',[]) %}
+  {% if r.get('year') and r.get('revenue') %}
+    {% set _ = _rev_years.append(r.get('year')|string) %}
+    {% set _ = _rev_vals.append(r.get('revenue')|replace('$','')|replace('B','')|replace('M','')|replace(',','')) %}
+  {% endif %}
+{% endfor %}
+{% if _rev_years %}
 (function(){
-  const labels = {{ rev_years | tojson }};
-  const raw    = {{ rev_vals | tojson }};
+  const labels = {{ _rev_years | tojson }};
+  const raw    = {{ _rev_vals | tojson }};
   const vals   = raw.map(v => parseFloat(v) || 0);
   new Chart(document.getElementById('revenueChart'), {
     type: 'bar',
@@ -655,6 +697,7 @@ new Chart(document.getElementById('radarChart'), {
     options: { responsive:true, plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false}}, y:{grid:{color:'rgba(0,0,0,.05)'}} } }
   });
 })();
+{% endif %}
 {% endif %}
 
 // ── Overlay logic ──────────────────────────────────────
@@ -749,6 +792,58 @@ function pollJob(jobId) {
       }
     });
 }
+
+// ── Private Documents ─────────────────────────────────────
+const _CID = {{ company.id }};
+
+function loadDocs() {
+  fetch(`/api/company-research/${_CID}/docs`)
+    .then(r => r.json())
+    .then(docs => {
+      const el = document.getElementById('docsList');
+      if (!el) return;
+      if (!docs.length) {
+        el.innerHTML = '<div style="font-size:.8rem;color:var(--muted);">No documents uploaded yet.</div>';
+        return;
+      }
+      const TYPE_LABELS = {
+        annual_report:'Annual Report', audit_report:'Audit Report', govt_filing:'Govt Filing',
+        financial_statement:'Financial Statement', contract:'Contract', prospectus:'Prospectus', other:'Document'
+      };
+      el.innerHTML = docs.map(d => `
+        <div style="display:flex;align-items:center;gap:.6rem;padding:.4rem .6rem;background:var(--bg2);border-radius:6px;">
+          <span style="font-size:.78rem;flex:1;color:var(--navy);font-weight:500;">📄 ${escHtml(d.filename)}</span>
+          <span style="font-size:.68rem;padding:.15rem .45rem;border-radius:3px;background:rgba(15,31,61,.08);color:var(--muted);">${TYPE_LABELS[d.doc_type]||d.doc_type}</span>
+          <button onclick="deleteDoc(${d.id})" style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:.8rem;padding:0 .2rem;">✕</button>
+        </div>`).join('');
+    }).catch(() => {});
+}
+
+function uploadDoc() {
+  const file = document.getElementById('docFile').files[0];
+  if (!file) { alert('Please select a file.'); return; }
+  const btn = document.getElementById('docUploadBtn');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('doc_type', document.getElementById('docType').value);
+  fetch(`/company-research/${_CID}/docs/upload`, { method:'POST', body:fd })
+    .then(r => r.json())
+    .then(d => {
+      btn.disabled = false; btn.textContent = 'Upload';
+      if (d.error) { alert(d.error); return; }
+      document.getElementById('docFile').value = '';
+      loadDocs();
+    }).catch(() => { btn.disabled=false; btn.textContent='Upload'; });
+}
+
+function deleteDoc(id) {
+  if (!confirm('Remove this document?')) return;
+  fetch(`/company-research/${_CID}/docs/${id}/delete`, { method:'POST' })
+    .then(() => loadDocs()).catch(() => {});
+}
+
+loadDocs();
 
 function exportPDF() {
   const btn = document.getElementById('pdfBtn');
