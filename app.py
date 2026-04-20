@@ -2175,5 +2175,133 @@ def api_fund_research_job(job_id):
     })
 
 
+# ── Company Research ──────────────────────────────────────────────────────────
+import company_research as cr
+_cr_jobs: dict = {}
+
+@app.route("/company-research")
+@login_required
+def company_research():
+    conn = db.get_db()
+    rows = conn.execute(
+        "SELECT cw.*, crr.report_json, crr.generated_at AS report_date "
+        "FROM company_watchlist cw "
+        "LEFT JOIN company_research_reports crr ON crr.company_id=cw.id "
+        "WHERE cw.deleted_at IS NULL ORDER BY cw.created_at DESC"
+    ).fetchall()
+    db.put_db(conn)
+    companies = []
+    for row in rows:
+        c = dict(row)
+        rj = {}
+        if c.get("report_json"):
+            try: rj = json.loads(c["report_json"])
+            except Exception: pass
+        cs = rj.get("company_score", {})
+        c["overall_score"]       = cs.get("overall_score", "")
+        c["investment_verdict"]  = cs.get("investment_verdict", "")
+        c["overall_risk"]        = rj.get("risk_assessment", {}).get("overall_risk", "")
+        c["sentiment_label"]     = rj.get("social_sentiment", {}).get("overall_sentiment", "")
+        companies.append(c)
+    u = _current_user()
+    return render_template("company_research.html",
+                           user=u, companies=companies,
+                           is_admin=(u.get("role")=="admin"),
+                           fund_name=os.getenv("FUND_NAME","DDQ Platform"))
+
+@app.route("/company-research/add", methods=["POST"])
+@login_required
+def company_research_add():
+    name    = request.form.get("company_name","").strip()
+    ticker  = request.form.get("ticker","").strip().upper()
+    sector  = request.form.get("sector","").strip()
+    country = request.form.get("country","").strip()
+    notes   = request.form.get("notes","").strip()
+    if not name:
+        flash("Company name is required.", "error")
+        return redirect(url_for("company_research"))
+    conn = db.get_db()
+    conn.execute(
+        "INSERT INTO company_watchlist (company_name, ticker, sector, country, notes, created_by) VALUES (%s,%s,%s,%s,%s,%s)",
+        (name, ticker, sector, country, notes, _current_user().get("id"))
+    )
+    conn.commit()
+    db.put_db(conn)
+    flash(f"{name} added to watchlist.", "success")
+    return redirect(url_for("company_research"))
+
+@app.route("/company-research/<int:cid>/delete", methods=["POST"])
+@login_required
+def company_research_delete(cid):
+    conn = db.get_db()
+    conn.execute("UPDATE company_watchlist SET deleted_at=NOW() WHERE id=%s", (cid,))
+    conn.commit()
+    db.put_db(conn)
+    return redirect(url_for("company_research"))
+
+@app.route("/company-research/<int:cid>/edit", methods=["POST"])
+@login_required
+def company_research_edit(cid):
+    conn = db.get_db()
+    conn.execute(
+        "UPDATE company_watchlist SET company_name=%s, ticker=%s, sector=%s, country=%s, notes=%s WHERE id=%s",
+        (request.form.get("company_name",""), request.form.get("ticker","").upper(),
+         request.form.get("sector",""), request.form.get("country",""),
+         request.form.get("notes",""), cid)
+    )
+    conn.commit()
+    db.put_db(conn)
+    return redirect(url_for("company_research"))
+
+@app.route("/company-research/<int:cid>/report")
+@login_required
+def company_research_report(cid):
+    conn = db.get_db()
+    co = conn.execute("SELECT * FROM company_watchlist WHERE id=%s AND deleted_at IS NULL", (cid,)).fetchone()
+    db.put_db(conn)
+    if not co:
+        flash("Company not found.", "error")
+        return redirect(url_for("company_research"))
+    report = cr.get_latest_report(cid)
+    return render_template("company_research_report.html",
+                           user=_current_user(), company=dict(co),
+                           report=report,
+                           fund_name=os.getenv("FUND_NAME","DDQ Platform"))
+
+@app.route("/api/company-research/<int:cid>/generate", methods=["POST"])
+@login_required
+def api_company_research_generate(cid):
+    job_id = f"cr_{cid}_{int(time.time())}"
+    _cr_jobs[job_id] = {"status": "running", "thoughts": []}
+
+    def _log(phase, text):
+        _cr_jobs[job_id]["thoughts"].append({"phase": phase, "text": text, "ts": time.time()})
+
+    def _run():
+        try:
+            cr.generate_report(cid, log=_log)
+            cr.save_thoughts(cid, _cr_jobs[job_id]["thoughts"])
+            _cr_jobs[job_id]["status"] = "done"
+        except Exception as e:
+            import traceback
+            app.logger.error("Company research error: %s\n%s", e, traceback.format_exc())
+            _cr_jobs[job_id]["status"] = "error"
+            _cr_jobs[job_id]["error"] = str(e)
+
+    _threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+@app.route("/api/company-research/job/<job_id>")
+@login_required
+def api_company_research_job(job_id):
+    job = _cr_jobs.get(job_id)
+    if not job:
+        return jsonify({"status": "unknown"})
+    offset = request.args.get("offset", 0, type=int)
+    thoughts = job.get("thoughts", [])
+    return jsonify({"status": job["status"], "error": job.get("error"),
+                    "thoughts": thoughts[offset:], "total": len(thoughts)})
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000, threaded=True)

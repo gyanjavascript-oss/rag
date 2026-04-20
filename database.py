@@ -527,6 +527,41 @@ def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        # Company research watchlist
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS company_watchlist (
+                id           SERIAL PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                ticker       TEXT NOT NULL DEFAULT '',
+                sector       TEXT NOT NULL DEFAULT '',
+                country      TEXT NOT NULL DEFAULT '',
+                notes        TEXT NOT NULL DEFAULT '',
+                created_by   INTEGER REFERENCES users(id),
+                created_at   TIMESTAMP DEFAULT NOW(),
+                deleted_at   TIMESTAMP DEFAULT NULL
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS company_research_reports (
+                id           SERIAL PRIMARY KEY,
+                company_id   INTEGER NOT NULL REFERENCES company_watchlist(id) ON DELETE CASCADE,
+                report_json  TEXT NOT NULL DEFAULT '{}',
+                generated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(company_id)
+            )
+        """)
+        # Company research agent memory
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS company_research_memory (
+                id           SERIAL PRIMARY KEY,
+                sector       TEXT NOT NULL DEFAULT '',
+                memory_type  TEXT NOT NULL DEFAULT 'strategy',
+                content      JSONB NOT NULL DEFAULT '{}',
+                hits         INTEGER DEFAULT 1,
+                created_at   TIMESTAMP DEFAULT NOW(),
+                updated_at   TIMESTAMP DEFAULT NOW()
+            )
+        """)
         # Research agent self-training memory
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fund_research_memory (

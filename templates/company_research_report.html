@@ -1,0 +1,768 @@
+{% extends "base.html" %}
+{% block title %}{{ company.company_name }} — Company Report{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+@keyframes fadeIn  { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+@keyframes pulse   { 0%,100%{opacity:.3;transform:scale(1)} 50%{opacity:.7;transform:scale(1.18)} }
+@keyframes pulse2  { 0%,100%{opacity:.15;transform:scale(1)} 50%{opacity:.4;transform:scale(1.35)} }
+@keyframes rotateR { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+@keyframes rotateL { from{transform:rotate(0deg)} to{transform:rotate(-360deg)} }
+@keyframes blink   { 0%,100%{opacity:1} 50%{opacity:0} }
+@keyframes shimmer { 0%{background-position:200% center} 100%{background-position:-200% center} }
+
+/* ── Overlay ────────────────────────────── */
+#genOverlay { display:none; position:fixed; inset:0; z-index:9999; background:var(--navy); flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
+#genOverlay.active { display:flex; }
+#genOverlay::before { content:''; position:absolute; width:600px; height:600px; border-radius:50%; background:radial-gradient(circle,rgba(201,168,76,.06) 0%,transparent 70%); pointer-events:none; }
+.ov-ring { position:absolute; border-radius:50%; border:1px solid rgba(201,168,76,.25); pointer-events:none; }
+.ov-ring-1 { width:160px; height:160px; animation:pulse 2.4s ease-in-out infinite; }
+.ov-ring-2 { width:240px; height:240px; animation:pulse2 2.4s ease-in-out infinite .4s; }
+.ov-ring-3 { width:320px; height:320px; animation:pulse2 2.4s ease-in-out infinite .8s; border-color:rgba(201,168,76,.08); }
+.ov-rot { position:absolute; border-radius:50%; border:1px dashed rgba(201,168,76,.18); pointer-events:none; }
+.ov-rot-1 { width:200px; height:200px; animation:rotateR 18s linear infinite; }
+.ov-rot-2 { width:280px; height:280px; animation:rotateL 24s linear infinite; border-color:rgba(201,168,76,.1); }
+.ov-icon-wrap { position:relative; z-index:2; width:80px; height:80px; border-radius:50%; background:var(--navy2); border:1px solid rgba(201,168,76,.35); display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 6px rgba(201,168,76,.06),0 0 40px rgba(201,168,76,.1); }
+.ov-icon { font-size:2rem; }
+.ov-panel { position:relative; z-index:2; width:100%; max-width:560px; background:var(--navy2); border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:1.75rem 2rem; display:flex; flex-direction:column; gap:1.1rem; box-shadow:0 24px 60px rgba(0,0,0,.4); }
+.ov-title { font-size:1.1rem; font-weight:700; color:var(--white); }
+.ov-title span { color:var(--gold); }
+.ov-step { font-size:.82rem; color:rgba(255,255,255,.55); min-height:1.25em; }
+.ov-cursor { animation:blink 1s step-end infinite; color:var(--gold); }
+.ov-bar-track { height:3px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
+.ov-bar-fill { height:100%; width:0%; border-radius:2px; background:linear-gradient(90deg,var(--gold) 0%,var(--gold2) 50%,var(--gold) 100%); background-size:200% auto; animation:shimmer 2s linear infinite; transition:width 7s linear; }
+.ov-log { max-height:190px; overflow-y:auto; background:rgba(0,0,0,.2); border:1px solid rgba(255,255,255,.06); border-radius:6px; padding:.65rem .85rem; display:flex; flex-direction:column; gap:.3rem; scrollbar-width:thin; scrollbar-color:rgba(201,168,76,.2) transparent; }
+.ov-log-hdr { font-size:.65rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:rgba(201,168,76,.4); margin-bottom:.25rem; padding-bottom:.2rem; border-bottom:1px solid rgba(255,255,255,.05); }
+.ov-log-line { display:flex; gap:.45rem; align-items:flex-start; font-size:.76rem; line-height:1.5; animation:fadeIn .2s ease; }
+.ov-eta { font-size:.72rem; color:rgba(255,255,255,.2); text-align:center; }
+
+/* ── Report layout ─────────────────────── */
+.r-card { background:var(--white); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); margin-bottom:1.25rem; }
+.r-card-head { padding:.85rem 1.25rem; border-bottom:1px solid var(--border); font-size:.8rem; font-weight:700; color:var(--navy); text-transform:uppercase; letter-spacing:.05em; display:flex; align-items:center; gap:.4rem; }
+.r-card-body { padding:1.25rem; }
+.r-grid { display:grid; grid-template-columns:1fr 1fr; gap:1.25rem; margin-bottom:1.25rem; }
+.r-grid.thirds { grid-template-columns:1fr 1fr 1fr; }
+@media(max-width:900px){.r-grid,.r-grid.thirds{grid-template-columns:1fr;}}
+
+/* ── Hero ──────────────────────────────── */
+.co-hero { background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 100%); border-radius:var(--radius); padding:2rem 2.25rem; color:#fff; margin-bottom:1.25rem; display:flex; align-items:flex-start; justify-content:space-between; gap:1.5rem; flex-wrap:wrap; }
+.co-name { font-size:1.55rem; font-weight:800; }
+.co-meta { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-top:.35rem; }
+.co-badge { background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.25); padding:.18rem .6rem; border-radius:4px; font-size:.78rem; font-weight:700; }
+.co-desc { font-size:.86rem; opacity:.8; max-width:520px; margin-top:.5rem; line-height:1.6; }
+
+/* ── Score ring ────────────────────────── */
+.score-ring-wrap { text-align:center; flex-shrink:0; }
+.score-ring-num { font-size:2rem; font-weight:900; }
+.score-ring-label { font-size:.72rem; opacity:.7; text-transform:uppercase; letter-spacing:.06em; }
+
+/* ── Score bar ─────────────────────────── */
+.score-bar-row { display:flex; align-items:center; gap:.75rem; margin-bottom:.5rem; }
+.score-bar-label { font-size:.78rem; color:var(--muted); width:120px; flex-shrink:0; }
+.score-bar-track { flex:1; height:7px; background:var(--bg2); border-radius:4px; overflow:hidden; }
+.score-bar-fill { height:100%; border-radius:4px; transition:width .8s ease; }
+.score-bar-val { font-size:.78rem; font-weight:700; width:32px; text-align:right; flex-shrink:0; }
+
+/* ── Verdict badge ─────────────────────── */
+.vb { display:inline-block; padding:.25rem .8rem; border-radius:4px; font-size:.8rem; font-weight:700; }
+.vb-strong-buy { background:#d1fae5; color:#065f46; }
+.vb-buy        { background:#dcfce7; color:#15803d; }
+.vb-hold       { background:#fef3c7; color:#92400e; }
+.vb-sell       { background:#fee2e2; color:#991b1b; }
+.vb-avoid      { background:#fce7f3; color:#9d174d; }
+
+/* ── Sentiment gauge ───────────────────── */
+.sent-gauge { height:12px; border-radius:6px; background:linear-gradient(to right,#dc2626,#f97316,#eab308,#84cc16,#16a34a); position:relative; margin:.5rem 0 1rem; }
+.sent-needle { position:absolute; top:-5px; width:22px; height:22px; background:var(--navy); border-radius:50%; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.3); transform:translateX(-50%); }
+
+/* ── KV ────────────────────────────────── */
+.kv-grid { display:grid; grid-template-columns:1fr 1fr; gap:.5rem .75rem; }
+.kv-label { font-size:.68rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.kv-val { font-size:.88rem; color:var(--navy); font-weight:500; margin-top:.1rem; }
+
+/* ── Alloc bar ─────────────────────────── */
+.alloc-list { display:flex; flex-direction:column; gap:.4rem; }
+.alloc-row { display:flex; align-items:center; gap:.6rem; font-size:.82rem; }
+.alloc-name { flex:1; color:var(--navy); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.alloc-bar-wrap { width:90px; height:6px; background:var(--bg2); border-radius:3px; flex-shrink:0; }
+.alloc-bar { height:6px; border-radius:3px; }
+
+/* ── Tag ───────────────────────────────── */
+.tag-list { display:flex; flex-wrap:wrap; gap:.4rem; }
+.tag { padding:.22rem .65rem; border-radius:999px; font-size:.76rem; background:var(--bg2); color:var(--muted); border:1px solid var(--border); }
+.tag.pos { background:#d1fae5; color:#065f46; border-color:#6ee7b7; }
+.tag.neg { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+
+/* ── News row ──────────────────────────── */
+.news-row { padding:.85rem 1.25rem; border-bottom:1px solid var(--border); display:flex; gap:.75rem; align-items:flex-start; }
+.news-row:last-child { border-bottom:none; }
+.sent-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:.35rem; }
+.sent-dot.pos { background:#059669; }
+.sent-dot.neg { background:#dc2626; }
+.sent-dot.neu { background:#d97706; }
+
+/* ── Social post ───────────────────────── */
+.social-post { padding:.85rem 1.25rem; border-bottom:1px solid var(--border); }
+.social-post:last-child { border-bottom:none; }
+.social-platform { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+
+/* ── Gen box ───────────────────────────── */
+.gen-box { background:var(--white); border:2px dashed var(--border); border-radius:var(--radius); padding:3rem 2rem; text-align:center; margin-bottom:1.5rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <a href="{{ url_for('company_research') }}" style="color:var(--muted);font-weight:400;font-size:.9rem;text-decoration:none;">🏢 Company Research</a>
+      <span style="color:var(--muted);font-weight:300;margin:0 .4rem;">/</span>
+      {{ company.company_name }}
+    </h1>
+  </div>
+  <div style="display:flex;gap:.75rem;align-items:center;">
+    {% if report %}
+    <button class="btn-outline btn-sm" onclick="exportPDF()" id="pdfBtn">⬇ Export PDF</button>
+    <button class="btn-outline btn-sm" onclick="generateReport()">↻ Regenerate</button>
+    {% endif %}
+    <a href="{{ url_for('company_research') }}" class="btn-outline btn-sm">← Back</a>
+  </div>
+</div>
+
+{% if report %}
+<div id="reportContent">
+
+{% set ov  = report.get('company_overview',{}) %}
+{% set cs  = report.get('company_score',{}) %}
+{% set fp  = report.get('financial_performance',{}) %}
+{% set sp  = report.get('stock_performance',{}) %}
+{% set ss  = report.get('social_sentiment',{}) %}
+{% set rv  = report.get('customer_reviews',{}) %}
+{% set cp  = report.get('competitive_position',{}) %}
+{% set ra  = report.get('risk_assessment',{}) %}
+{% set go  = report.get('growth_outlook',{}) %}
+{% set rf  = report.get('regulatory_filings',{}) %}
+{% set BAD = ['','unavailable','n/a','unknown','none','-','—'] %}
+
+<!-- Hero -->
+<div class="co-hero">
+  <div>
+    <div class="co-name">{{ ov.get('full_name') or company.company_name }}</div>
+    <div class="co-meta">
+      {% if ov.get('ticker') or company.ticker %}<span class="co-badge">{{ ov.get('ticker') or company.ticker }}</span>{% endif %}
+      {% if ov.get('sector') or company.sector %}<span class="co-badge" style="background:rgba(201,168,76,.2);border-color:rgba(201,168,76,.4);">{{ ov.get('sector') or company.sector }}</span>{% endif %}
+      {% if ov.get('exchange') %}<span class="co-badge" style="opacity:.7;">{{ ov.get('exchange') }}</span>{% endif %}
+      {% if ov.get('market_cap') and ov.get('market_cap')|lower not in BAD %}<span class="co-badge" style="opacity:.7;">{{ ov.get('market_cap') }}</span>{% endif %}
+    </div>
+    {% if ov.get('description') and ov.get('description')|lower not in BAD %}
+    <div class="co-desc">{{ ov.get('description') }}</div>
+    {% endif %}
+    <div style="font-size:.75rem;opacity:.5;margin-top:.5rem;">Report generated {{ report.get('generated_at','')[:19] | replace('T',' ') }}</div>
+  </div>
+  <!-- Score ring -->
+  {% if cs.get('overall_score') %}
+  <div class="score-ring-wrap">
+    <svg width="100" height="100" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="8"/>
+      <circle cx="50" cy="50" r="42" fill="none"
+        stroke="{% if cs.get('overall_score',0)|int >= 65 %}#34d399{% elif cs.get('overall_score',0)|int >= 40 %}#fbbf24{% else %}#f87171{% endif %}"
+        stroke-width="8" stroke-linecap="round"
+        stroke-dasharray="264"
+        stroke-dashoffset="{{ 264 - (264 * cs.get('overall_score',0) / 100) | int }}"
+        transform="rotate(-90 50 50)"/>
+      <text x="50" y="46" text-anchor="middle" fill="white" font-size="20" font-weight="900" font-family="inherit">{{ cs.get('overall_score') }}</text>
+      <text x="50" y="60" text-anchor="middle" fill="rgba(255,255,255,.55)" font-size="9" font-family="inherit">/ 100</text>
+    </svg>
+    <div class="score-ring-label" style="color:rgba(255,255,255,.6);">Company Score</div>
+    {% set v = cs.get('investment_verdict','Hold') %}
+    <span class="vb vb-{{ v | lower | replace(' ','-') }}" style="margin-top:.5rem;display:inline-block;">{{ v }}</span>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Summary card -->
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📋 Report Summary</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));border-bottom:1px solid var(--border);">
+    {% set stat_items = [] %}
+    {% if cs.get('financial_score') %}{% set _ = stat_items.append(('Financial',cs.get('financial_score'),'score')) %}{% endif %}
+    {% if cs.get('sentiment_score') %}{% set _ = stat_items.append(('Sentiment',cs.get('sentiment_score'),'score')) %}{% endif %}
+    {% if cs.get('growth_score') %}{% set _ = stat_items.append(('Growth',cs.get('growth_score'),'score')) %}{% endif %}
+    {% if cs.get('customer_score') %}{% set _ = stat_items.append(('Customer',cs.get('customer_score'),'score')) %}{% endif %}
+    {% if cs.get('risk_score') %}{% set _ = stat_items.append(('Risk',cs.get('risk_score'),'score')) %}{% endif %}
+    {% if ra.get('overall_risk') %}{% set _ = stat_items.append(('Risk Level',ra.get('overall_risk'),'text')) %}{% endif %}
+    {% for label, val, vtype in stat_items %}
+    <div style="padding:.75rem 1rem;border-right:1px solid var(--border);text-align:center;">
+      <div style="font-size:.64rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem;">{{ label }}</div>
+      {% if vtype == 'score' %}
+      <div style="font-size:.92rem;font-weight:800;color:{% if val|int >= 65 %}#059669{% elif val|int >= 40 %}#d97706{% else %}#dc2626{% endif %};">{{ val }}<span style="font-size:.62rem;font-weight:400;color:var(--muted);">/100</span></div>
+      {% else %}
+      <div style="font-size:.85rem;font-weight:700;color:var(--navy);">{{ val }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;">
+    {% if cs.get('verdict_summary') and cs.get('verdict_summary')|lower not in BAD %}
+    <div style="padding:1rem 1.25rem;border-right:1px solid var(--border);">
+      <div style="font-size:.67rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem;">Verdict Summary</div>
+      <div style="font-size:.86rem;color:var(--navy);line-height:1.65;">{{ cs.get('verdict_summary') }}</div>
+    </div>
+    {% endif %}
+    <div style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.55rem;">
+      {% if cs.get('biggest_opportunity') and cs.get('biggest_opportunity')|lower not in BAD %}
+      <div>
+        <div style="font-size:.67rem;font-weight:700;color:#059669;text-transform:uppercase;margin-bottom:.15rem;">↑ Biggest Opportunity</div>
+        <div style="font-size:.82rem;color:var(--navy);">{{ cs.get('biggest_opportunity') }}</div>
+      </div>{% endif %}
+      {% if cs.get('biggest_threat') and cs.get('biggest_threat')|lower not in BAD %}
+      <div>
+        <div style="font-size:.67rem;font-weight:700;color:#dc2626;text-transform:uppercase;margin-bottom:.15rem;">↓ Biggest Threat</div>
+        <div style="font-size:.82rem;color:var(--navy);">{{ cs.get('biggest_threat') }}</div>
+      </div>{% endif %}
+      {% if cs.get('suitable_for') and cs.get('suitable_for')|lower not in BAD %}
+      <div style="font-size:.78rem;color:var(--muted);">Suitable for: {{ cs.get('suitable_for') }}</div>{% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Score bars + Radar chart -->
+<div class="r-grid" style="margin-bottom:1.25rem;">
+  <div class="r-card">
+    <div class="r-card-head">📊 Score Breakdown</div>
+    <div class="r-card-body">
+      {% set score_bars = [
+        ('Financial Health', cs.get('financial_score',0), '#2563eb'),
+        ('Market Sentiment', cs.get('sentiment_score',0), '#7c3aed'),
+        ('Growth Potential', cs.get('growth_score',0), '#059669'),
+        ('Customer Score',   cs.get('customer_score',0), '#d97706'),
+        ('Management',       cs.get('management_score',0), '#0891b2'),
+        ('Risk Score',       cs.get('risk_score',0), '#dc2626'),
+      ] %}
+      {% for label, val, color in score_bars %}
+      {% if val %}
+      <div class="score-bar-row">
+        <div class="score-bar-label">{{ label }}</div>
+        <div class="score-bar-track"><div class="score-bar-fill" style="width:{{ val }}%;background:{{ color }};"></div></div>
+        <div class="score-bar-val" style="color:{{ color }};">{{ val }}</div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  <div class="r-card">
+    <div class="r-card-head">🕸️ Radar Overview</div>
+    <div class="r-card-body" style="display:flex;align-items:center;justify-content:center;min-height:200px;">
+      <canvas id="radarChart" style="max-height:220px;"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- Company Overview + Financial KPIs -->
+<div class="r-grid">
+  <div class="r-card">
+    <div class="r-card-head">🏢 Company Overview</div>
+    <div class="r-card-body">
+      <div class="kv-grid">
+        {% set ov_fields = [
+          ('CEO',ov.get('ceo')),('Founded',ov.get('founded')),
+          ('HQ',ov.get('headquarters')),('Employees',ov.get('employees')),
+          ('Industry',ov.get('industry')),('Website',ov.get('website')),
+          ('Exchange',ov.get('exchange')),('Market Cap',ov.get('market_cap')),
+        ] %}
+        {% for label, val in ov_fields %}
+        {% if val and val|lower not in BAD %}
+        <div><div class="kv-label">{{ label }}</div><div class="kv-val">{{ val }}</div></div>
+        {% endif %}{% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="r-card">
+    <div class="r-card-head">💰 Financial KPIs</div>
+    <div class="r-card-body">
+      <div class="kv-grid">
+        {% set fp_fields = [
+          ('Revenue (TTM)',fp.get('revenue_ttm')),('Revenue Growth',fp.get('revenue_growth_yoy')),
+          ('Net Income',fp.get('net_income')),('Profit Margin',fp.get('profit_margin')),
+          ('EBITDA',fp.get('ebitda')),('Debt/Equity',fp.get('debt_to_equity')),
+          ('P/E Ratio',fp.get('pe_ratio')),('EPS',fp.get('eps')),
+          ('ROE',fp.get('roe')),('Dividend Yield',fp.get('dividend_yield')),
+        ] %}
+        {% for label, val in fp_fields %}
+        {% if val and val|lower not in BAD %}
+        <div><div class="kv-label">{{ label }}</div>
+          <div class="kv-val {% if '+' in (val|string) or (val|string).startswith('-') %}{% if '+' in (val|string) %}pos{% else %}neg{% endif %}{% endif %}">{{ val }}</div>
+        </div>
+        {% endif %}{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Revenue trend chart -->
+{% set rev_years = [] %}{% set rev_vals = [] %}
+{% for r in fp.get('annual_revenue',[]) %}
+  {% if r.get('revenue') and r.get('revenue')|lower not in BAD %}
+    {% set _ = rev_years.append(r.get('year')|string) %}
+    {% set _ = rev_vals.append(r.get('revenue')|replace('$','')|replace('B','')|replace('M','')|replace(',','')) %}
+  {% endif %}
+{% endfor %}
+{% if rev_years %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📈 Revenue Trend</div>
+  <div class="r-card-body"><canvas id="revenueChart" height="120"></canvas></div>
+</div>
+{% endif %}
+
+<!-- Stock Performance -->
+{% set sp_fields = [('YTD',sp.get('ytd')),('1 Year',sp.get('1_year')),('3 Year',sp.get('3_year')),
+  ('52W High',sp.get('52w_high')),('52W Low',sp.get('52w_low')),('Beta',sp.get('beta')),
+  ('vs Sector',sp.get('vs_sector')),('vs S&P500',sp.get('vs_sp500')),('Price',sp.get('current_price'))] %}
+{% set valid_sp = sp_fields | selectattr('1') | list %}
+{% if valid_sp %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📉 Stock Performance</div>
+  <div class="r-card-body" style="padding:0;">
+    <table style="width:100%;border-collapse:collapse;font-size:.84rem;">
+      <thead><tr style="background:var(--bg2);">
+        {% for label,_ in valid_sp %}<th style="padding:.4rem .75rem;text-align:left;font-size:.7rem;font-weight:600;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);">{{ label }}</th>{% endfor %}
+      </tr></thead>
+      <tbody><tr>{% for label,val in valid_sp %}
+        <td style="padding:.5rem .75rem;font-weight:600;color:{% if val and val[0:1]=='-' %}#dc2626{% elif val and val[0:1]=='+' %}#059669{% else %}var(--navy){% endif %};">{{ val }}</td>
+      {% endfor %}</tr></tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Social Sentiment -->
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📱 Social Sentiment & Market Emotion</div>
+  <div class="r-card-body">
+    {% set s_score = ss.get('sentiment_score',50)|float %}
+    <div style="display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap;">
+      <div style="min-width:240px;flex:1;">
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.75rem;">
+          <span style="font-size:1.4rem;font-weight:800;color:{% if s_score>=65 %}#059669{% elif s_score>=40 %}#d97706{% else %}#dc2626{% endif %};">{{ ss.get('overall_sentiment','—') }}</span>
+          <span style="font-size:.8rem;color:var(--muted);">Score: {{ s_score|int }}/100</span>
+        </div>
+        <div class="sent-gauge">
+          <div class="sent-needle" style="left:{{ [s_score,98]|min }}%;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:.65rem;color:var(--muted);margin-top:.25rem;">
+          <span>Extremely Negative</span><span>Neutral</span><span>Extremely Positive</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:.4rem;flex:1;">
+        {% for label, val in [('Reddit',ss.get('reddit_sentiment')),('Twitter/X',ss.get('twitter_sentiment')),('News',ss.get('news_sentiment'))] %}
+        {% if val and val|lower not in BAD %}
+        <div style="font-size:.82rem;"><span style="color:var(--muted);font-weight:600;">{{ label }}:</span> {{ val }}</div>
+        {% endif %}{% endfor %}
+        {% if ss.get('trending_topics') %}
+        <div class="tag-list" style="margin-top:.35rem;">
+          {% for t in ss.get('trending_topics',[])[:6] %}<span class="tag">{{ t }}</span>{% endfor %}
+        </div>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Customer Reviews -->
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">⭐ Customer Reviews & Reputation</div>
+  <div class="r-card-body">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;margin-bottom:1rem;">
+      {% for label, val in [('Trustpilot',rv.get('trustpilot_rating')),('Google',rv.get('google_rating')),('Glassdoor',rv.get('glassdoor_rating')),('App Store',rv.get('app_store_rating')),('Overall',rv.get('overall_rating'))] %}
+      {% if val and val|lower not in BAD %}
+      <div style="background:var(--bg2);border-radius:6px;padding:.6rem .75rem;text-align:center;">
+        <div style="font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.2rem;">{{ label }}</div>
+        <div style="font-size:1rem;font-weight:800;color:var(--navy);">{{ val }}</div>
+      </div>{% endif %}{% endfor %}
+    </div>
+    <div class="r-grid" style="margin-bottom:0;">
+      {% if rv.get('positive_themes') %}
+      <div>
+        <div style="font-size:.7rem;font-weight:700;color:#059669;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem;">✓ What customers love</div>
+        <div class="tag-list">{% for t in rv.get('positive_themes',[]) %}<span class="tag pos">{{ t }}</span>{% endfor %}</div>
+      </div>{% endif %}
+      {% if rv.get('negative_themes') %}
+      <div>
+        <div style="font-size:.7rem;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem;">✕ Common complaints</div>
+        <div class="tag-list">{% for t in rv.get('negative_themes',[]) %}<span class="tag neg">{{ t }}</span>{% endfor %}</div>
+      </div>{% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Competitive Position -->
+{% if cp.get('main_competitors') or cp.get('strengths') or cp.get('weaknesses') %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">⚔️ Competitive Position</div>
+  <div class="r-card-body">
+    {% if cp.get('competitive_moat') and cp.get('competitive_moat')|lower not in BAD %}
+    <div style="font-size:.84rem;color:var(--navy);margin-bottom:.85rem;padding:.6rem .85rem;background:var(--bg2);border-radius:6px;">
+      <strong>Moat:</strong> {{ cp.get('competitive_moat') }}
+    </div>{% endif %}
+    <div class="r-grid" style="margin-bottom:.85rem;">
+      {% if cp.get('strengths') %}
+      <div>
+        <div style="font-size:.7rem;font-weight:700;color:#059669;text-transform:uppercase;margin-bottom:.35rem;">Strengths</div>
+        {% for s in cp.get('strengths',[]) %}<div style="font-size:.82rem;color:var(--muted);margin-bottom:.2rem;">• {{ s }}</div>{% endfor %}
+      </div>{% endif %}
+      {% if cp.get('weaknesses') %}
+      <div>
+        <div style="font-size:.7rem;font-weight:700;color:#dc2626;text-transform:uppercase;margin-bottom:.35rem;">Weaknesses</div>
+        {% for w in cp.get('weaknesses',[]) %}<div style="font-size:.82rem;color:var(--muted);margin-bottom:.2rem;">• {{ w }}</div>{% endfor %}
+      </div>{% endif %}
+    </div>
+    {% set comps = cp.get('main_competitors',[]) | selectattr('name') | list %}
+    {% if comps %}
+    <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.4rem;">Main Competitors</div>
+    <div style="display:flex;flex-wrap:wrap;gap:.5rem;">
+      {% for c in comps[:6] %}
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:.4rem .75rem;font-size:.8rem;">
+        <span style="font-weight:700;color:var(--navy);">{{ c.get('name') }}</span>
+        {% if c.get('ticker') %}<span style="color:var(--muted);margin-left:.3rem;">{{ c.get('ticker') }}</span>{% endif %}
+        {% if c.get('vs_this_company') %}<div style="font-size:.72rem;color:var(--muted);">{{ c.get('vs_this_company') }}</div>{% endif %}
+      </div>{% endfor %}
+    </div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Growth Outlook -->
+{% if go.get('growth_drivers') or go.get('1_year_outlook') %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">🚀 Growth Outlook</div>
+  <div class="r-card-body">
+    {% if go.get('addressable_market') and go.get('addressable_market')|lower not in BAD %}
+    <div style="font-size:.82rem;color:var(--muted);margin-bottom:.65rem;"><strong style="color:var(--navy);">TAM:</strong> {{ go.get('addressable_market') }}</div>{% endif %}
+    {% if go.get('growth_drivers') %}
+    <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.35rem;">Growth Drivers</div>
+    <div class="tag-list" style="margin-bottom:.85rem;">{% for g in go.get('growth_drivers',[]) %}<span class="tag pos">{{ g }}</span>{% endfor %}</div>{% endif %}
+    <div class="r-grid" style="margin-bottom:0;">
+      {% if go.get('1_year_outlook') and go.get('1_year_outlook')|lower not in BAD %}
+      <div style="background:var(--bg2);border-radius:6px;padding:.75rem .9rem;">
+        <div style="font-size:.68rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.3rem;">1-Year Outlook</div>
+        <div style="font-size:.83rem;color:var(--navy);line-height:1.55;">{{ go.get('1_year_outlook') }}</div>
+      </div>{% endif %}
+      {% if go.get('3_year_outlook') and go.get('3_year_outlook')|lower not in BAD %}
+      <div style="background:var(--bg2);border-radius:6px;padding:.75rem .9rem;">
+        <div style="font-size:.68rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.3rem;">3-Year Outlook</div>
+        <div style="font-size:.83rem;color:var(--navy);line-height:1.55;">{{ go.get('3_year_outlook') }}</div>
+      </div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Risk Assessment -->
+{% set risks = ra.get('key_risks',[]) | selectattr('risk') | list %}
+{% if risks %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">⚡ Risk Assessment</div>
+  <div class="r-card-body" style="display:flex;flex-direction:column;gap:.6rem;">
+    {% for r in risks %}
+    {% set sev = r.get('severity','Medium') %}
+    <div style="padding:.6rem .85rem;border-radius:6px;border:1px solid var(--border);background:var(--bg2);display:flex;gap:.75rem;align-items:flex-start;">
+      <span style="font-size:.68rem;font-weight:700;padding:.15rem .5rem;border-radius:3px;flex-shrink:0;
+        {% if sev=='High' %}background:#fee2e2;color:#991b1b;{% elif sev=='Low' %}background:#d1fae5;color:#065f46;{% else %}background:#fef3c7;color:#92400e;{% endif %}">{{ sev }}</span>
+      <div>
+        <div style="font-size:.85rem;font-weight:700;color:var(--navy);">{{ r.get('risk') }}</div>
+        {% if r.get('detail') and r.get('detail')|lower not in BAD %}<div style="font-size:.78rem;color:var(--muted);">{{ r.get('detail') }}</div>{% endif %}
+      </div>
+    </div>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Regulatory / Filings -->
+{% set filings = rf.get('key_filing_highlights',[]) %}
+{% set legal   = rf.get('legal_issues',[]) %}
+{% if filings or legal %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📄 Regulatory & Government Filings</div>
+  <div class="r-card-body">
+    {% if rf.get('latest_annual_report_year') %}<div style="font-size:.8rem;color:var(--muted);margin-bottom:.65rem;">Latest annual report: <strong style="color:var(--navy);">{{ rf.get('latest_annual_report_year') }}</strong></div>{% endif %}
+    {% if filings %}
+    <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.35rem;">Key Filing Highlights</div>
+    {% for h in filings %}<div style="font-size:.82rem;color:var(--muted);padding:.3rem 0;border-bottom:1px solid var(--border);">• {{ h }}</div>{% endfor %}{% endif %}
+    {% if legal %}
+    <div style="font-size:.7rem;font-weight:700;color:#dc2626;text-transform:uppercase;margin:.75rem 0 .35rem;">Legal Issues</div>
+    {% for l in legal %}<div style="font-size:.82rem;color:var(--muted);">• {{ l }}</div>{% endfor %}{% endif %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Recent News -->
+{% set news = report.get('recent_news',[]) | selectattr('headline') | list %}
+{% if news %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">📰 Recent News</div>
+  <div style="padding:0;">
+    {% for n in news %}
+    {% set sent = n.get('sentiment','Neutral') %}
+    {% set url = n.get('source_url','') %}
+    <div class="news-row">
+      <div class="sent-dot {% if sent=='Positive' %}pos{% elif sent=='Negative' %}neg{% else %}neu{% endif %}"></div>
+      <div style="flex:1;">
+        {% if url and url.startswith('http') %}
+        <a href="{{ url }}" target="_blank" rel="noopener noreferrer" style="font-size:.86rem;font-weight:600;color:var(--accent);text-decoration:underline;text-underline-offset:2px;">{{ n.get('headline') }} <span style="font-size:.7rem;opacity:.6;">↗</span></a>
+        {% else %}
+        <div style="font-size:.86rem;font-weight:600;color:var(--navy);">{{ n.get('headline') }}</div>
+        {% endif %}
+        {% if n.get('date') %}<div style="font-size:.72rem;color:var(--muted);margin:.15rem 0;">{{ n.get('date') }}</div>{% endif %}
+        {% if n.get('summary') %}<div style="font-size:.8rem;color:var(--muted);">{{ n.get('summary') }}</div>{% endif %}
+      </div>
+      <span style="font-size:.7rem;font-weight:700;padding:.15rem .45rem;border-radius:3px;flex-shrink:0;
+        {% if sent=='Positive' %}background:#d1fae5;color:#065f46;{% elif sent=='Negative' %}background:#fee2e2;color:#991b1b;{% else %}background:#f1f5f9;color:#475569;{% endif %}">{{ sent }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Social Posts -->
+{% set posts = report.get('social_posts',[]) | selectattr('content') | list %}
+{% if posts %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head">💬 Social Media Highlights</div>
+  <div>
+    {% for p in posts %}
+    {% set sent = p.get('sentiment','Neutral') %}
+    <div class="social-post">
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;">
+        <span class="social-platform" style="color:{% if p.get('platform')=='Reddit' %}#ff4500{% elif p.get('platform')=='Twitter' %}#1d9bf0{% elif p.get('platform')=='LinkedIn' %}#0077b5{% else %}var(--muted){% endif %};">
+          {% if p.get('platform')=='Reddit' %}Reddit{% elif p.get('platform')=='Twitter' %}Twitter/X{% else %}{{ p.get('platform','Social') }}{% endif %}
+        </span>
+        <span style="font-size:.7rem;font-weight:700;padding:.1rem .4rem;border-radius:3px;
+          {% if sent=='Positive' %}background:#d1fae5;color:#065f46;{% elif sent=='Negative' %}background:#fee2e2;color:#991b1b;{% else %}background:#f1f5f9;color:#475569;{% endif %}">{{ sent }}</span>
+      </div>
+      <div style="font-size:.82rem;color:var(--navy);line-height:1.55;">{{ p.get('content') }}</div>
+      {% if p.get('url') and p.get('url').startswith('http') %}
+      <a href="{{ p.get('url') }}" target="_blank" rel="noopener noreferrer" style="font-size:.72rem;color:var(--accent);">View post ↗</a>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Agent Thinking -->
+{% set thoughts = report.get('_agent_thoughts',[]) %}
+{% if thoughts %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head" style="cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+    🧠 Agent Thinking <span style="font-size:.72rem;color:var(--muted);font-weight:400;">{{ thoughts|length }} steps</span>
+    <span style="margin-left:auto;font-size:.78rem;color:var(--muted);">▼ Show</span>
+  </div>
+  <div style="display:none;background:#0f172a;border-radius:0 0 var(--radius) var(--radius);padding:.85rem 1.1rem;font-family:monospace;font-size:.76rem;max-height:380px;overflow-y:auto;display:flex;flex-direction:column;gap:.3rem;">
+    {% for t in thoughts %}
+    <div style="display:flex;gap:.5rem;">
+      <span style="flex-shrink:0;{% if t.get('phase')=='phase' %}color:#60a5fa;{% elif t.get('phase')=='think' %}color:#a78bfa;{% elif t.get('phase')=='search' %}color:#34d399;{% elif t.get('phase')=='browse' %}color:#fbbf24;{% else %}color:#6b7280;{% endif %}">
+        {% if t.get('phase')=='phase' %}◆{% elif t.get('phase')=='think' %}◎{% elif t.get('phase')=='search' %}⊹{% elif t.get('phase')=='browse' %}◫{% else %}·{% endif %}
+      </span>
+      <span style="color:rgba(255,255,255,.75);">{{ t.get('text','') }}</span>
+    </div>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Disclaimer -->
+<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:var(--radius);padding:1rem 1.25rem;margin-bottom:1.25rem;display:flex;gap:.75rem;">
+  <span style="font-size:1.1rem;flex-shrink:0;">⚠️</span>
+  <div style="font-size:.77rem;color:#92400e;line-height:1.6;">
+    <strong>Disclaimer:</strong> This report is AI-generated using publicly available data. It does <strong>not</strong> constitute financial or investment advice. Past performance and social sentiment are not guarantees of future results. Always conduct your own due diligence and consult a qualified financial adviser before investing.
+  </div>
+</div>
+
+</div>{# reportContent #}
+
+{% else %}
+<div class="gen-box">
+  <h3>No report yet for {{ company.company_name }}</h3>
+  <p>The AI agent will research this company across the web, social media, review sites, and government filings to produce a full score report.</p>
+  <button class="btn-primary" onclick="generateReport()" id="genBtn">▶ Generate Report</button>
+  <div id="genProgress" style="display:none;font-size:.84rem;color:var(--muted);margin-top:.75rem;"></div>
+</div>
+{% endif %}
+
+<!-- ── Generation Overlay ─────────────────────────── -->
+<div id="genOverlay">
+  <div style="position:absolute;display:flex;align-items:center;justify-content:center;inset:0;pointer-events:none;">
+    <div class="ov-ring ov-ring-3"></div><div class="ov-ring ov-ring-2"></div><div class="ov-ring ov-ring-1"></div>
+    <div class="ov-rot ov-rot-2"></div><div class="ov-rot ov-rot-1"></div>
+  </div>
+  <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:1.5rem;width:100%;max-width:560px;padding:0 1.25rem;">
+    <div class="ov-icon-wrap"><span class="ov-icon">🏢</span></div>
+    <div class="ov-panel">
+      <div>
+        <div class="ov-title">Researching <span>{{ company.company_name }}</span></div>
+        <div class="ov-step" id="overlayStep">Initialising research agent<span class="ov-cursor">|</span></div>
+      </div>
+      <div>
+        <div class="ov-bar-track"><div class="ov-bar-fill" id="overlayFill"></div></div>
+        <div style="display:flex;justify-content:space-between;margin-top:.4rem;">
+          <span style="font-size:.68rem;color:rgba(255,255,255,.2);">Analysing</span>
+          <span style="font-size:.68rem;color:rgba(201,168,76,.5);" id="sciPct">0%</span>
+        </div>
+      </div>
+      <div class="ov-log" id="thoughtsBox"><div class="ov-log-hdr">Agent Thinking</div></div>
+      <div class="ov-eta">Typically takes 60 – 120 seconds</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Charts ────────────────────────────────────────────
+{% if cs.get('financial_score') %}
+new Chart(document.getElementById('radarChart'), {
+  type: 'radar',
+  data: {
+    labels: ['Financial', 'Sentiment', 'Growth', 'Customer', 'Management', 'Risk'],
+    datasets: [{
+      label: '{{ company.company_name | tojson }}',
+      data: [
+        {{ cs.get('financial_score',0) }},
+        {{ cs.get('sentiment_score',0) }},
+        {{ cs.get('growth_score',0) }},
+        {{ cs.get('customer_score',0) }},
+        {{ cs.get('management_score',0) }},
+        {{ cs.get('risk_score',0) }}
+      ],
+      backgroundColor: 'rgba(201,168,76,.15)',
+      borderColor: '#c9a84c',
+      pointBackgroundColor: '#c9a84c',
+      borderWidth: 2, pointRadius: 3,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: true,
+    scales: { r: { min: 0, max: 100, ticks: { stepSize: 25, font:{size:9} }, pointLabels:{font:{size:11}} } },
+    plugins: { legend: { display: false } }
+  }
+});
+{% endif %}
+
+{% if rev_years %}
+(function(){
+  const labels = {{ rev_years | tojson }};
+  const raw    = {{ rev_vals | tojson }};
+  const vals   = raw.map(v => parseFloat(v) || 0);
+  new Chart(document.getElementById('revenueChart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ label:'Revenue', data:vals, backgroundColor:'rgba(37,99,235,.7)', borderRadius:4 }] },
+    options: { responsive:true, plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false}}, y:{grid:{color:'rgba(0,0,0,.05)'}} } }
+  });
+})();
+{% endif %}
+
+// ── Overlay logic ──────────────────────────────────────
+const PHASE_STYLE = {
+  phase:  { icon:'◆', color:'var(--gold)',          textColor:'rgba(255,255,255,.8)' },
+  think:  { icon:'◎', color:'rgba(201,168,76,.6)', textColor:'rgba(255,255,255,.65)' },
+  search: { icon:'⊹', color:'rgba(255,255,255,.5)', textColor:'rgba(255,255,255,.6)' },
+  browse: { icon:'◫', color:'rgba(201,168,76,.45)', textColor:'rgba(255,255,255,.55)' },
+  done:   { icon:'✓', color:'var(--gold)',          textColor:'rgba(255,255,255,.75)' },
+};
+
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function renderThoughts(thoughts) {
+  const box = document.getElementById('thoughtsBox');
+  thoughts.forEach(t => {
+    const st = PHASE_STYLE[t.phase] || { icon:'·', color:'rgba(255,255,255,.3)', textColor:'rgba(255,255,255,.4)' };
+    const line = document.createElement('div');
+    line.className = 'ov-log-line';
+    line.innerHTML = `<span style="color:${st.color};flex-shrink:0;">${st.icon}</span><span style="color:${st.textColor};">${escHtml(t.text)}</span>`;
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+    if (t.phase === 'phase' || t.phase === 'think') {
+      const el = document.getElementById('overlayStep');
+      if (el) el.innerHTML = (t.text.length>72?t.text.slice(0,72)+'…':t.text) + '<span class="ov-cursor">|</span>';
+    }
+  });
+}
+
+let _pct = 0;
+function _setPct(p) {
+  _pct = Math.min(100, p);
+  const fill = document.getElementById('overlayFill');
+  const lbl  = document.getElementById('sciPct');
+  if (fill) fill.style.width = _pct + '%';
+  if (lbl)  lbl.textContent  = Math.round(_pct) + '%';
+}
+
+const STEPS = ['Discovering data sources…','Searching financials…','Reading filings…','Checking social media…','Analysing reviews…','Fetching news…','Building score…','Writing report…'];
+
+function showOverlay() {
+  const overlay = document.getElementById('genOverlay');
+  const box = document.getElementById('thoughtsBox');
+  const stepEl = document.getElementById('overlayStep');
+  if (box) box.innerHTML = '<div class="ov-log-hdr">Agent Thinking</div>';
+  if (stepEl) stepEl.innerHTML = 'Initialising research agent<span class="ov-cursor">|</span>';
+  _setPct(0);
+  const fill = document.getElementById('overlayFill');
+  if (fill) { fill.style.transition='none'; fill.style.width='0%'; }
+  overlay.classList.add('active');
+  document.body.style.overflow = 'hidden';
+  let idx = 0;
+  const perStep = 100 / STEPS.length;
+  function advance() { idx++; if(fill) fill.style.transition='width 7s linear'; _setPct(idx*perStep); }
+  advance();
+  return setInterval(advance, 9000);
+}
+
+function hideOverlay(timer) {
+  clearInterval(timer);
+  _setPct(100);
+  setTimeout(() => {
+    document.getElementById('genOverlay').classList.remove('active');
+    document.body.style.overflow = '';
+  }, 600);
+}
+
+let _pollOffset = 0, _pollTimer = null, _advTimer = null;
+
+function generateReport() {
+  _advTimer = showOverlay();
+  _pollOffset = 0;
+  fetch('/api/company-research/{{ company.id }}/generate', { method:'POST' })
+    .then(r => r.json())
+    .then(d => { if (d.job_id) _pollTimer = setInterval(() => pollJob(d.job_id), 2500); })
+    .catch(e => { hideOverlay(_advTimer); alert('Error: ' + e.message); });
+}
+
+function pollJob(jobId) {
+  fetch(`/api/company-research/job/${jobId}?offset=${_pollOffset}`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.thoughts && d.thoughts.length) { renderThoughts(d.thoughts); _pollOffset += d.thoughts.length; }
+      if (d.status === 'done') {
+        clearInterval(_pollTimer);
+        hideOverlay(_advTimer);
+        setTimeout(() => location.reload(), 400);
+      } else if (d.status === 'error') {
+        clearInterval(_pollTimer);
+        hideOverlay(_advTimer);
+        alert('Error: ' + (d.error || 'Unknown error'));
+      }
+    });
+}
+
+function exportPDF() {
+  const btn = document.getElementById('pdfBtn');
+  btn.disabled = true; btn.textContent = 'Preparing…';
+  html2pdf().set({
+    margin:[10,10,10,10],
+    filename:'{{ company.company_name | replace(" ","_") }}_Report.pdf',
+    image:{type:'jpeg',quality:.95},
+    html2canvas:{scale:2,useCORS:true,logging:false},
+    jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
+    pagebreak:{mode:['avoid-all','css']},
+  }).from(document.getElementById('reportContent')).save()
+    .then(() => { btn.disabled=false; btn.textContent='⬇ Export PDF'; })
+    .catch(() => { btn.disabled=false; btn.textContent='⬇ Export PDF'; });
+}
+</script>
+{% endblock %}

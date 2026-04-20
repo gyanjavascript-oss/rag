@@ -59,6 +59,9 @@
       <a href="{{ url_for('plugins_dashboard') }}" class="nav-item {% if request.endpoint == 'plugins_dashboard' %}active{% endif %}">
         <span class="nav-icon">🔌</span> Plugins
       </a>
+      <a href="{{ url_for('company_research') }}" class="nav-item {% if request.endpoint in ['company_research','company_research_report'] %}active{% endif %}">
+        <span class="nav-icon">🏢</span> Company Research
+      </a>
       <a href="{{ url_for('fund_research') }}" class="nav-item {% if request.endpoint in ['fund_research','fund_research_report'] %}active{% endif %}">
         <span class="nav-icon">⚠️</span> Fund Research
       </a>

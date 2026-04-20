@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}Company Research{% endblock %}
+{% block head %}
+<style>
+.cr-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:1.25rem; margin-top:1.5rem; }
+.cr-card { background:var(--white); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); display:flex; flex-direction:column; overflow:hidden; }
+.cr-card-top { padding:1.1rem 1.25rem .75rem; flex:1; }
+.cr-company-name { font-size:1rem; font-weight:700; color:var(--navy); margin-bottom:.2rem; }
+.cr-meta { font-size:.75rem; color:var(--muted); display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; margin-bottom:.75rem; }
+.cr-ticker { background:var(--navy); color:var(--white); font-size:.72rem; font-weight:700; padding:.15rem .5rem; border-radius:4px; }
+.cr-sector { background:var(--bg2); color:var(--muted); font-size:.72rem; padding:.15rem .5rem; border-radius:4px; }
+.cr-scores { display:grid; grid-template-columns:1fr 1fr 1fr; gap:.5rem; margin-bottom:.75rem; }
+.cr-score-box { background:var(--bg2); border-radius:6px; padding:.45rem .6rem; text-align:center; }
+.cr-score-label { font-size:.62rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:.15rem; }
+.cr-score-val { font-size:.92rem; font-weight:800; }
+.score-high { color:#059669; }
+.score-mid  { color:#d97706; }
+.score-low  { color:#dc2626; }
+.cr-card-actions { padding:.75rem 1.25rem; border-top:1px solid var(--border); display:flex; gap:.5rem; align-items:center; background:var(--bg2); }
+.verdict-badge { font-size:.7rem; font-weight:700; padding:.2rem .6rem; border-radius:4px; }
+.vb-strong-buy { background:#d1fae5; color:#065f46; }
+.vb-buy        { background:#dcfce7; color:#15803d; }
+.vb-hold       { background:#fef3c7; color:#92400e; }
+.vb-sell       { background:#fee2e2; color:#991b1b; }
+.vb-avoid      { background:#fce7f3; color:#9d174d; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">🏢 Company Research</h1>
+    <p class="page-sub">AI-powered company score reports — financials, social sentiment, reviews & filings</p>
+  </div>
+  <button class="btn-primary" onclick="document.getElementById('addModal').style.display='flex'">+ Add Company</button>
+</div>
+
+{% if companies %}
+<div class="cr-grid">
+  {% for c in companies %}
+  <div class="cr-card">
+    <div class="cr-card-top">
+      <div class="cr-company-name">{{ c.company_name }}</div>
+      <div class="cr-meta">
+        {% if c.ticker %}<span class="cr-ticker">{{ c.ticker }}</span>{% endif %}
+        {% if c.sector %}<span class="cr-sector">{{ c.sector }}</span>{% endif %}
+        {% if c.country %}<span style="color:var(--muted);">📍 {{ c.country }}</span>{% endif %}
+      </div>
+
+      {% if c.overall_score != '' %}
+      <div class="cr-scores">
+        <div class="cr-score-box">
+          <div class="cr-score-label">Score</div>
+          <div class="cr-score-val {% if c.overall_score|int >= 65 %}score-high{% elif c.overall_score|int >= 40 %}score-mid{% else %}score-low{% endif %}">
+            {{ c.overall_score }}<span style="font-size:.65rem;font-weight:400;">/100</span>
+          </div>
+        </div>
+        <div class="cr-score-box">
+          <div class="cr-score-label">Verdict</div>
+          <div class="cr-score-val" style="font-size:.75rem;">
+            {% set v = c.investment_verdict %}
+            <span class="verdict-badge vb-{{ v | lower | replace(' ','-') }}">{{ v or '—' }}</span>
+          </div>
+        </div>
+        <div class="cr-score-box">
+          <div class="cr-score-label">Sentiment</div>
+          <div class="cr-score-val" style="font-size:.75rem;
+            {% if c.sentiment_label == 'Positive' %}color:#059669;{% elif c.sentiment_label == 'Negative' %}color:#dc2626;{% else %}color:#d97706;{% endif %}">
+            {{ c.sentiment_label or '—' }}
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div style="font-size:.8rem;color:var(--muted);padding:.5rem 0;">No report yet — generate one to see scores.</div>
+      {% endif %}
+    </div>
+
+    <div class="cr-card-actions">
+      <a href="{{ url_for('company_research_report', cid=c.id) }}" class="btn-primary btn-sm">
+        {% if c.overall_score != '' %}📊 View Report{% else %}▶ Generate Report{% endif %}
+      </a>
+      <button class="btn-outline btn-sm"
+        data-edit-id="{{ c.id }}"
+        data-edit-name="{{ c.company_name | e }}"
+        data-edit-ticker="{{ (c.ticker or '') | e }}"
+        data-edit-sector="{{ (c.sector or '') | e }}"
+        data-edit-country="{{ (c.country or '') | e }}"
+        data-edit-notes="{{ (c.notes or '') | e }}"
+        onclick="openEdit(this)">✎ Edit</button>
+      <form method="POST" action="{{ url_for('company_research_delete', cid=c.id) }}" style="margin-left:auto;"
+            onsubmit="return confirm('Soft-delete {{ c.company_name | e }}?')">
+        <button class="btn-outline btn-sm" style="color:var(--danger);border-color:var(--danger);">✕</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div style="text-align:center;padding:4rem 2rem;color:var(--muted);">
+  <div style="font-size:2.5rem;margin-bottom:1rem;">🏢</div>
+  <div style="font-size:1rem;font-weight:600;color:var(--navy);margin-bottom:.5rem;">No companies yet</div>
+  <div style="font-size:.88rem;">Add a company to generate an AI-powered score report.</div>
+</div>
+{% endif %}
+
+<!-- Add Modal -->
+<div id="addModal" class="modal-overlay" style="display:none;">
+  <div class="modal" style="width:500px;">
+    <div class="modal-header">
+      <h3>Add Company</h3>
+      <button class="modal-close" onclick="document.getElementById('addModal').style.display='none'">✕</button>
+    </div>
+    <form method="POST" action="{{ url_for('company_research_add') }}" style="padding:1.5rem;display:flex;flex-direction:column;gap:.85rem;">
+      <div class="form-group">
+        <label class="form-label">Company Name *</label>
+        <input name="company_name" type="text" class="form-input" placeholder="e.g. Apple Inc." required>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
+        <div class="form-group">
+          <label class="form-label">Ticker Symbol</label>
+          <input name="ticker" type="text" class="form-input" placeholder="e.g. AAPL" style="text-transform:uppercase;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Country</label>
+          <input name="country" type="text" class="form-input" placeholder="e.g. USA">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Sector</label>
+        <select name="sector" class="form-input">
+          <option value="">— Select sector —</option>
+          {% for s in ['Technology','Healthcare','Financials','Consumer Discretionary','Consumer Staples',
+            'Energy','Materials','Industrials','Real Estate','Utilities','Communication Services',
+            'E-Commerce','Crypto/Blockchain','Automotive','Aerospace','Retail','Media','Education','Other'] %}
+          <option>{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <textarea name="notes" class="form-input" rows="2" placeholder="Optional research notes…"></textarea>
+      </div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end;">
+        <button type="button" class="btn-outline" onclick="document.getElementById('addModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Add Company</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div id="editModal" class="modal-overlay" style="display:none;">
+  <div class="modal" style="width:500px;">
+    <div class="modal-header">
+      <h3>Edit Company</h3>
+      <button class="modal-close" onclick="document.getElementById('editModal').style.display='none'">✕</button>
+    </div>
+    <form id="editForm" method="POST" style="padding:1.5rem;display:flex;flex-direction:column;gap:.85rem;">
+      <div class="form-group">
+        <label class="form-label">Company Name *</label>
+        <input id="edit_name" name="company_name" type="text" class="form-input" required>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
+        <div class="form-group">
+          <label class="form-label">Ticker</label>
+          <input id="edit_ticker" name="ticker" type="text" class="form-input" style="text-transform:uppercase;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Country</label>
+          <input id="edit_country" name="country" type="text" class="form-input">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Sector</label>
+        <select id="edit_sector" name="sector" class="form-input">
+          {% for s in ['Technology','Healthcare','Financials','Consumer Discretionary','Consumer Staples',
+            'Energy','Materials','Industrials','Real Estate','Utilities','Communication Services',
+            'E-Commerce','Crypto/Blockchain','Automotive','Aerospace','Retail','Media','Education','Other'] %}
+          <option>{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <textarea id="edit_notes" name="notes" class="form-input" rows="2"></textarea>
+      </div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end;">
+        <button type="button" class="btn-outline" onclick="document.getElementById('editModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn-primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openEdit(btn) {
+  const d = btn.dataset;
+  document.getElementById('editForm').action = '/company-research/' + d.editId + '/edit';
+  document.getElementById('edit_name').value    = d.editName;
+  document.getElementById('edit_ticker').value  = d.editTicker;
+  document.getElementById('edit_country').value = d.editCountry;
+  document.getElementById('edit_sector').value  = d.editSector;
+  document.getElementById('edit_notes').value   = d.editNotes;
+  document.getElementById('editModal').style.display = 'flex';
+}
+document.addEventListener('click', e => {
+  if (e.target.id === 'addModal' || e.target.id === 'editModal') e.target.style.display = 'none';
+});
+</script>
+{% endblock %}
