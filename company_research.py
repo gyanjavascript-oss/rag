@@ -785,6 +785,11 @@ def _targeted_research(company_name: str, ticker: str, sector: str,
         "investment_verdict":   [f"{company_name} analyst rating buy sell hold price target 2024 2025"],
         "overall_score":        [f"{company_name} financial health score investment rating 2024"],
         "recent_news":          [f"{company_name} latest news 2025", f"{company_name} news updates {ticker}"],
+        "funding_rounds":       [f"{company_name} funding rounds investment history venture capital raised"],
+        "total_funding_raised": [f"{company_name} total funding raised valuation investors Crunchbase"],
+        "major_shareholders":   [f"{company_name} {ticker} major shareholders ownership structure institutional holders"],
+        "ipo_status":           [f"{company_name} {ticker} IPO date listing stock exchange history"],
+        "recent_ma":            [f"{company_name} acquisition merger divestiture deal 2023 2024 2025"],
     }
 
     extra_evidence = []
@@ -861,6 +866,7 @@ CRITICAL RULES:
 13. red_flags: list concrete anomalies found — discrepancies between company claims and govt/news data, unexplained changes, hidden liabilities, tax disputes, related-party transactions, insider selling, etc.
 14. references: include ALL source URLs found during research — every govt portal, filing, news article, financial data page.
 15. Tax compliance: check {country} tax authority for any notices, disputes, deferred taxes, penalties — report in regulatory_filings.regulatory_actions.
+16. funding_history: populate ALL funding rounds found (Seed through IPO/PE); list every named investor; extract ownership % from filings or news; note burn rate and runway for private companies; add M&A events found in evidence.
 
 Return this exact JSON:
 {{
@@ -886,6 +892,34 @@ Return this exact JSON:
     "current_price": "", "ytd": "", "1_year": "", "3_year": "",
     "52w_high": "", "52w_low": "", "beta": "",
     "vs_sector": "", "vs_sp500": ""
+  }},
+  "funding_history": {{
+    "company_type": "Public|Private|PE-backed|VC-backed|Bootstrapped|Unknown",
+    "total_funding_raised": "",
+    "funding_currency": "USD",
+    "ipo_status": "Listed|Pre-IPO|Not Listed|Unknown",
+    "ipo_date": "",
+    "ipo_price": "",
+    "ipo_exchange": "",
+    "current_valuation": "",
+    "ownership_structure": "",
+    "major_shareholders": [
+      {{"name":"","type":"Founder|VC|PE|Institutional|Individual|Government","stake_pct":"","since":""}}
+    ],
+    "funding_rounds": [
+      {{"round":"Seed|Pre-Seed|Series A|Series B|Series C|Series D|Series E|IPO|Secondary|Bridge|PE Buyout|Other",
+        "date":"","amount":"","lead_investors":[],"post_money_valuation":"","notes":""}}
+    ],
+    "notable_investors": [
+      {{"name":"","type":"VC|PE|Angel|Institutional|Corporate","invested_at_round":"","known_stake":""}}
+    ],
+    "recent_ma": [
+      {{"type":"Acquisition|Merger|Divestiture|Strategic Investment","target":"","date":"","amount":"","status":"Completed|Announced|Rumoured","notes":""}}
+    ],
+    "burn_rate": "",
+    "runway_months": "",
+    "last_valuation_date": "",
+    "investor_notes": ""
   }},
   "social_sentiment": {{
     "overall_sentiment": "Positive|Mixed|Negative",

@@ -346,6 +346,183 @@
 </div>
 {% endif %}
 
+<!-- Funding & Investment History -->
+{% set fh = report.get('funding_history',{}) %}
+{% set funding_rounds = (fh.get('funding_rounds') or []) | selectattr('round') | list %}
+{% set major_shareholders = (fh.get('major_shareholders') or []) | selectattr('name') | list %}
+{% set notable_investors  = (fh.get('notable_investors') or []) | selectattr('name') | list %}
+{% set recent_ma          = (fh.get('recent_ma') or []) | selectattr('type') | list %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head" style="justify-content:space-between;">
+    <span>💼 Funding & Investment History</span>
+    {% if fh.get('company_type') and fh.get('company_type')|lower not in BAD %}
+    <span style="font-size:.72rem;font-weight:600;padding:.18rem .6rem;border-radius:4px;
+      {% if 'public' in fh.get('company_type','').lower() %}background:#d1fae5;color:#065f46;
+      {% elif 'vc' in fh.get('company_type','').lower() or 'pe' in fh.get('company_type','').lower() %}background:#dbeafe;color:#1e40af;
+      {% else %}background:var(--bg2);color:var(--muted);{% endif %}">
+      {{ fh.get('company_type') }}
+    </span>
+    {% endif %}
+  </div>
+  <div class="r-card-body">
+
+    <!-- Summary KPIs row -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.6rem;margin-bottom:1.25rem;">
+      {% set kpis = [
+        ('Total Raised',   fh.get('total_funding_raised')),
+        ('Valuation',      fh.get('current_valuation')),
+        ('IPO Status',     fh.get('ipo_status')),
+        ('IPO Date',       fh.get('ipo_date')),
+        ('IPO Price',      fh.get('ipo_price')),
+        ('Exchange',       fh.get('ipo_exchange')),
+        ('Burn Rate',      fh.get('burn_rate')),
+        ('Runway',         fh.get('runway_months') ~ (' mo' if fh.get('runway_months') and fh.get('runway_months')|lower not in BAD else '')),
+      ] %}
+      {% for label, val in kpis %}
+        {% if val and val|lower not in BAD %}
+        <div style="background:var(--bg2);border-radius:6px;padding:.55rem .7rem;">
+          <div style="font-size:.62rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.2rem;">{{ label }}</div>
+          <div style="font-size:.9rem;font-weight:700;color:var(--navy);">{{ val }}</div>
+        </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <!-- Funding Rounds timeline -->
+    {% if funding_rounds %}
+    <div style="margin-bottom:1.25rem;">
+      <div style="font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.6rem;">Funding Rounds</div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:.82rem;min-width:500px;">
+          <thead><tr style="background:var(--bg2);">
+            <th style="padding:.4rem .7rem;text-align:left;font-size:.68rem;font-weight:600;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);">Round</th>
+            <th style="padding:.4rem .7rem;text-align:left;font-size:.68rem;font-weight:600;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);">Date</th>
+            <th style="padding:.4rem .7rem;text-align:left;font-size:.68rem;font-weight:600;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);">Amount</th>
+            <th style="padding:.4rem .7rem;text-align:left;font-size:.68rem;font-weight:600;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);">Post-Money Val.</th>
+            <th style="padding:.4rem .7rem;text-align:left;font-size:.68rem;font-weight:600;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);">Lead Investors</th>
+          </tr></thead>
+          <tbody>
+          {% for r in funding_rounds %}
+          <tr style="border-bottom:1px solid var(--border);{% if loop.last %}border-bottom:none;{% endif %}">
+            <td style="padding:.5rem .7rem;">
+              <span style="font-weight:700;padding:.15rem .5rem;border-radius:4px;font-size:.76rem;
+                {% if 'ipo' in r.get('round','').lower() %}background:#fef3c7;color:#92400e;
+                {% elif 'seed' in r.get('round','').lower() %}background:#f3e8ff;color:#6b21a8;
+                {% elif 'series' in r.get('round','').lower() %}background:#dbeafe;color:#1e40af;
+                {% elif 'pe' in r.get('round','').lower() or 'buyout' in r.get('round','').lower() %}background:#fee2e2;color:#991b1b;
+                {% else %}background:var(--bg2);color:var(--muted);{% endif %}">
+                {{ r.get('round') }}
+              </span>
+            </td>
+            <td style="padding:.5rem .7rem;color:var(--muted);">{{ r.get('date','—') }}</td>
+            <td style="padding:.5rem .7rem;font-weight:600;color:var(--navy);">{{ r.get('amount','—') }}</td>
+            <td style="padding:.5rem .7rem;color:var(--muted);font-size:.78rem;">{{ r.get('post_money_valuation','—') }}</td>
+            <td style="padding:.5rem .7rem;font-size:.78rem;color:var(--navy);">
+              {% if r.get('lead_investors') %}{{ r.get('lead_investors') | join(', ') }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="r-grid">
+      <!-- Major Shareholders -->
+      {% if major_shareholders %}
+      <div>
+        <div style="font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.6rem;">Major Shareholders</div>
+        <div class="alloc-list">
+        {% for s in major_shareholders %}
+          {% set pct = s.get('stake_pct','') %}
+          {% set pct_num = pct | replace('%','') | replace(' ','') %}
+          <div class="alloc-row">
+            <div class="alloc-name" title="{{ s.get('name') }}">
+              {{ s.get('name') }}
+              {% if s.get('type') %}<span style="font-size:.67rem;color:var(--muted);"> · {{ s.get('type') }}</span>{% endif %}
+            </div>
+            {% if pct and pct|lower not in BAD %}
+            <div class="alloc-bar-wrap"><div class="alloc-bar" style="width:{{ [pct_num|float, 100]|min }}%;background:var(--navy);"></div></div>
+            <span style="font-size:.75rem;font-weight:600;width:42px;text-align:right;">{{ pct }}</span>
+            {% endif %}
+          </div>
+        {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Notable Investors -->
+      {% if notable_investors %}
+      <div>
+        <div style="font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.6rem;">Notable Investors</div>
+        <div style="display:flex;flex-direction:column;gap:.4rem;">
+        {% for inv in notable_investors %}
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem;padding:.45rem .6rem;background:var(--bg2);border-radius:6px;">
+          <div>
+            <div style="font-size:.82rem;font-weight:600;color:var(--navy);">{{ inv.get('name') }}</div>
+            {% if inv.get('invested_at_round') and inv.get('invested_at_round')|lower not in BAD %}
+            <div style="font-size:.7rem;color:var(--muted);">{{ inv.get('invested_at_round') }}</div>
+            {% endif %}
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:.1rem;">
+            {% if inv.get('type') %}<span style="font-size:.67rem;font-weight:700;padding:.1rem .4rem;border-radius:3px;background:rgba(201,168,76,.15);color:#7c5e0a;">{{ inv.get('type') }}</span>{% endif %}
+            {% if inv.get('known_stake') and inv.get('known_stake')|lower not in BAD %}<span style="font-size:.72rem;color:var(--muted);">{{ inv.get('known_stake') }}</span>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- M&A Activity -->
+    {% if recent_ma %}
+    <div style="margin-top:.75rem;">
+      <div style="font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.6rem;">M&A Activity</div>
+      <div style="display:flex;flex-direction:column;gap:.5rem;">
+      {% for m in recent_ma %}
+      <div style="padding:.6rem .85rem;border-left:3px solid {% if m.get('type','')=='Acquisition' %}var(--navy){% elif m.get('type','')=='Merger' %}#8b5cf6{% elif m.get('type','')=='Divestiture' %}#d97706{% else %}#64748b{% endif %};background:var(--bg2);border-radius:0 6px 6px 0;">
+        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.2rem;">
+          <span style="font-size:.76rem;font-weight:700;color:var(--navy);">{{ m.get('type') }}</span>
+          {% if m.get('target') and m.get('target')|lower not in BAD %}<span style="font-size:.78rem;color:var(--muted);">→ {{ m.get('target') }}</span>{% endif %}
+          {% if m.get('date') and m.get('date')|lower not in BAD %}<span style="font-size:.72rem;color:var(--muted);margin-left:auto;">{{ m.get('date') }}</span>{% endif %}
+          {% if m.get('amount') and m.get('amount')|lower not in BAD %}<span style="font-size:.76rem;font-weight:600;color:var(--navy);">{{ m.get('amount') }}</span>{% endif %}
+          {% if m.get('status') %}<span style="font-size:.67rem;font-weight:700;padding:.1rem .4rem;border-radius:3px;
+            {% if m.get('status')=='Completed' %}background:#d1fae5;color:#065f46;
+            {% elif m.get('status')=='Announced' %}background:#dbeafe;color:#1e40af;
+            {% else %}background:#fef3c7;color:#92400e;{% endif %}">{{ m.get('status') }}</span>{% endif %}
+        </div>
+        {% if m.get('notes') and m.get('notes')|lower not in BAD %}
+        <div style="font-size:.77rem;color:var(--muted);">{{ m.get('notes') }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Ownership structure note -->
+    {% if fh.get('ownership_structure') and fh.get('ownership_structure')|lower not in BAD %}
+    <div style="margin-top:.85rem;padding:.65rem .85rem;background:var(--bg2);border-radius:6px;font-size:.82rem;color:var(--navy);">
+      <span style="font-size:.68rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:.2rem;">Ownership Structure</span>
+      {{ fh.get('ownership_structure') }}
+    </div>
+    {% endif %}
+
+    {% if fh.get('investor_notes') and fh.get('investor_notes')|lower not in BAD %}
+    <div style="margin-top:.5rem;padding:.65rem .85rem;background:#fffbeb;border-radius:6px;font-size:.8rem;color:#78350f;border:1px solid #fde68a;">
+      {{ fh.get('investor_notes') }}
+    </div>
+    {% endif %}
+
+    {% if not funding_rounds and not major_shareholders and not notable_investors and not fh.get('total_funding_raised') %}
+    <div style="text-align:center;padding:1.5rem;color:var(--muted);font-size:.84rem;">No funding history data found — company may be private/bootstrapped or data was not publicly available.</div>
+    {% endif %}
+
+  </div>
+</div>
+
 <!-- Social Sentiment -->
 <div class="r-card" style="margin-bottom:1.25rem;">
   <div class="r-card-head">📱 Social Sentiment & Market Emotion</div>
