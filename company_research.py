@@ -712,6 +712,107 @@ def _build_evidence_text(ev: dict) -> str:
     return "\n\n".join(lines)[:28000]
 
 
+# ── Report validator ─────────────────────────────────────────────────────────
+
+BAD_VALUES = {"", "unavailable", "n/a", "unknown", "none", "-", "—", "null", "not available", "not found"}
+
+def _is_empty(v) -> bool:
+    if v is None: return True
+    if isinstance(v, str): return v.strip().lower() in BAD_VALUES
+    if isinstance(v, (list, dict)): return len(v) == 0
+    if isinstance(v, (int, float)): return v == 0
+    return False
+
+def _validate_report(report: dict) -> list:
+    """Return a list of (field_path, reason) tuples for critically missing data."""
+    gaps = []
+    ov = report.get("company_overview", {})
+    fp = report.get("financial_performance", {})
+    sp = report.get("stock_performance", {})
+    ss = report.get("social_sentiment", {})
+    cs = report.get("company_score", {})
+    news = report.get("recent_news", [])
+
+    checks = [
+        # (value, field_path, reason)
+        (ov.get("description"),     "company_overview.description",     "Company description missing"),
+        (ov.get("ceo"),             "company_overview.ceo",             "CEO/leadership not found"),
+        (ov.get("employees"),       "company_overview.employees",       "Employee count not found"),
+        (fp.get("revenue_ttm"),     "financial_performance.revenue_ttm","Revenue (TTM) not found"),
+        (fp.get("net_income"),      "financial_performance.net_income", "Net income not found"),
+        (fp.get("profit_margin"),   "financial_performance.profit_margin","Profit margin not found"),
+        (fp.get("market_cap") or ov.get("market_cap"), "financial_performance.market_cap", "Market cap not found"),
+        (sp.get("current_price") or sp.get("ytd"), "stock_performance.current_price", "Stock price / YTD not found"),
+        (ss.get("overall_sentiment"), "social_sentiment.overall_sentiment", "Social sentiment not assessed"),
+        (cs.get("investment_verdict"), "company_score.investment_verdict", "Investment verdict missing"),
+        (cs.get("overall_score"),   "company_score.overall_score",      "Overall score is 0"),
+    ]
+
+    for val, path, reason in checks:
+        if _is_empty(val):
+            gaps.append((path, reason))
+
+    # Annual revenue: need at least 3 years with actual data
+    rev_data = [r for r in fp.get("annual_revenue", []) if not _is_empty(r.get("revenue"))]
+    if len(rev_data) < 3:
+        gaps.append(("financial_performance.annual_revenue", f"Only {len(rev_data)}/5 years of revenue data found"))
+
+    # Need at least 3 news items
+    valid_news = [n for n in news if not _is_empty(n.get("headline"))]
+    if len(valid_news) < 3:
+        gaps.append(("recent_news", f"Only {len(valid_news)} news items found (need 5+)"))
+
+    return gaps
+
+
+def _targeted_research(company_name: str, ticker: str, sector: str,
+                        country: str, missing_fields: list, log=None) -> str:
+    """Run targeted searches for specific missing fields and return extra evidence."""
+    def _log(p, t):
+        if log: log(p, t)
+
+    field_queries = {
+        "revenue_ttm":          [f"{company_name} annual revenue {ticker} 2024 2025 financial results"],
+        "net_income":           [f"{company_name} net income profit loss 2024 earnings report"],
+        "profit_margin":        [f"{company_name} profit margin EBITDA operating income 2024"],
+        "market_cap":           [f"{company_name} {ticker} market capitalization stock price today"],
+        "current_price":        [f"{company_name} {ticker} stock price current quote 2025"],
+        "ceo":                  [f"{company_name} CEO chief executive officer leadership team 2024"],
+        "employees":            [f"{company_name} number of employees headcount 2024 2025"],
+        "description":          [f"{company_name} company overview business description what they do"],
+        "annual_revenue":       [f"{company_name} revenue 2019 2020 2021 2022 2023 2024 annual report historical"],
+        "overall_sentiment":    [f"{company_name} customer reviews reddit twitter public opinion 2024"],
+        "investment_verdict":   [f"{company_name} analyst rating buy sell hold price target 2024 2025"],
+        "overall_score":        [f"{company_name} financial health score investment rating 2024"],
+        "recent_news":          [f"{company_name} latest news 2025", f"{company_name} news updates {ticker}"],
+    }
+
+    extra_evidence = []
+    searched = set()
+
+    for path, _ in missing_fields:
+        key = path.split(".")[-1]
+        queries = field_queries.get(key, [f"{company_name} {key.replace('_',' ')} {country} 2024"])
+        for q in queries:
+            if q in searched:
+                continue
+            searched.add(q)
+            _log("search", f"[Retry] {q}")
+            results = _web_search(q, max_results=5)
+            for r in results:
+                extra_evidence.append(f"[{r.get('title','')}] {r.get('snippet','')}\nURL: {r.get('url','')}")
+            top_url = next((r.get("url","") for r in results
+                           if r.get("url","").startswith("http") and "google" not in r.get("url","")), "")
+            if top_url:
+                _log("browse", f"[Retry] Reading: {top_url}")
+                page = _browse(top_url, char_limit=3000)
+                if page and not page.startswith("[Browse failed"):
+                    extra_evidence.append(f"[RETRY] SOURCE: {top_url}\n{page[:2500]}")
+            time.sleep(0.3)
+
+    return "\n\n".join(extra_evidence)[:12000]
+
+
 # ── Report generator ──────────────────────────────────────────────────────────
 
 def generate_report(company_id: int, log=None) -> dict:
@@ -934,6 +1035,43 @@ Return this exact JSON:
 
     if "error" in report:
         return report
+
+    # ── Post-generation validation + auto-retry ───────────────────────────────
+    MAX_RETRIES = 2
+    for _retry in range(MAX_RETRIES):
+        gaps = _validate_report(report)
+        if not gaps:
+            _log("done", f"✓ Data validation passed — all critical fields populated.")
+            break
+        _log("phase", f"⚠ Validation found {len(gaps)} missing field(s) — running targeted research (attempt {_retry+1}/{MAX_RETRIES})…")
+        for _path, _reason in gaps:
+            _log("think", f"Missing: {_reason}")
+        extra_ev = _targeted_research(company_name, ticker, sector, country, gaps, log=log)
+        if not extra_ev:
+            _log("think", "No additional evidence found — keeping current report.")
+            break
+        evidence_text = evidence_text + "\n\nADDITIONAL EVIDENCE (retry):\n" + extra_ev
+        _log("phase", f"Re-generating report with additional evidence…")
+        retry_report = _llm_json(
+            system=f"""You are a senior equity research analyst. A previous generation attempt left {len(gaps)} critical fields empty.
+Using the ADDITIONAL EVIDENCE provided, fill in the missing fields and return a COMPLETE updated JSON report.
+
+MISSING FIELDS THIS PASS: {[reason for _, reason in gaps]}
+
+Follow the same JSON schema as before. Use "" only for truly unknown fields — never write "Unavailable", "N/A", "Unknown".
+Return the complete JSON (not just the missing sections).""",
+            user=f"COMPANY: {company_name} ({ticker})\nSECTOR: {sector}\nCOUNTRY: {country}\n\nEVIDENCE:\n{evidence_text}\n\nFocus on fixing these missing fields: {[path for path, _ in gaps]}"
+        )
+        if "error" not in retry_report:
+            report = retry_report
+        else:
+            _log("think", f"Retry LLM call failed: {retry_report.get('error')} — keeping current report.")
+            break
+    else:
+        # Ran out of retries — log remaining gaps
+        remaining = _validate_report(report)
+        if remaining:
+            _log("think", f"⚠ After {MAX_RETRIES} retries, {len(remaining)} field(s) still incomplete: {[r for _,r in remaining]}")
 
     import datetime as _dt
     report["generated_at"] = _dt.datetime.now().isoformat()
