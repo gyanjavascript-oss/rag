@@ -408,7 +408,7 @@ def _research_agent_loop(company_name: str, ticker: str, sector: str,
     CHECKLIST = f"""
 REQUIRED DATA (mark each [x] as found):
 FINANCIALS:
-[ ] Revenue TTM + 3-year annual revenue ({current_year-1}, {current_year-2}, {current_year-3})
+[ ] Revenue TTM + 5-year annual revenue ({current_year-1}, {current_year-2}, {current_year-3}, {current_year-4}, {current_year-5})
 [ ] Revenue growth YoY %, net income, profit margin, EBITDA
 [ ] Debt-to-equity, current ratio, P/E, EPS, dividend yield, ROE, ROA
 [ ] Market capitalisation, stock price YTD + 1-year, 52-week high/low, beta
@@ -776,7 +776,9 @@ Return this exact JSON:
     "annual_revenue": [
       {{"year": {current_year-1}, "revenue": "", "growth": ""}},
       {{"year": {current_year-2}, "revenue": "", "growth": ""}},
-      {{"year": {current_year-3}, "revenue": "", "growth": ""}}
+      {{"year": {current_year-3}, "revenue": "", "growth": ""}},
+      {{"year": {current_year-4}, "revenue": "", "growth": ""}},
+      {{"year": {current_year-5}, "revenue": "", "growth": ""}}
     ]
   }},
   "stock_performance": {{

@@ -306,17 +306,22 @@
 </div>
 
 <!-- Revenue trend chart -->
-{% set rev_years = [] %}{% set rev_vals = [] %}
-{% for r in fp.get('annual_revenue',[]) %}
+{% set rev_rows = fp.get('annual_revenue',[]) | sort(attribute='year') %}
+{% set rev_years = [] %}{% set rev_vals = [] %}{% set rev_growths = [] %}
+{% for r in rev_rows %}
   {% if r.get('revenue') and r.get('revenue')|lower not in BAD %}
     {% set _ = rev_years.append(r.get('year')|string) %}
-    {% set _ = rev_vals.append(r.get('revenue')|replace('$','')|replace('B','')|replace('M','')|replace(',','')) %}
+    {% set _ = rev_vals.append(r.get('revenue')|replace('$','')|replace('B','')|replace('M','')|replace(',','')|replace(' ','')) %}
+    {% set _ = rev_growths.append(r.get('growth','') or '') %}
   {% endif %}
 {% endfor %}
 {% if rev_years %}
 <div class="r-card" style="margin-bottom:1.25rem;">
-  <div class="r-card-head">📈 Revenue Trend</div>
-  <div class="r-card-body"><canvas id="revenueChart" height="120"></canvas></div>
+  <div class="r-card-head" style="justify-content:space-between;">
+    <span>📈 Revenue Trend (5-Year)</span>
+    <span style="font-size:.72rem;color:var(--muted);font-weight:400;">{{ rev_years|first }} – {{ rev_years|last }}</span>
+  </div>
+  <div class="r-card-body"><canvas id="revenueChart" height="140"></canvas></div>
 </div>
 {% endif %}
 
@@ -902,27 +907,49 @@ new Chart(document.getElementById('radarChart'), {
 });
 {% endif %}
 
-{% if report %}
-{% set _fp = report.get('financial_performance',{}) %}
-{% set _rev_years = [] %}{% set _rev_vals = [] %}
-{% for r in _fp.get('annual_revenue',[]) %}
-  {% if r.get('year') and r.get('revenue') %}
-    {% set _ = _rev_years.append(r.get('year')|string) %}
-    {% set _ = _rev_vals.append(r.get('revenue')|replace('$','')|replace('B','')|replace('M','')|replace(',','')) %}
-  {% endif %}
-{% endfor %}
-{% if _rev_years %}
+{% if report and rev_years %}
 (function(){
-  const labels = {{ _rev_years | tojson }};
-  const raw    = {{ _rev_vals | tojson }};
-  const vals   = raw.map(v => parseFloat(v) || 0);
+  const labels  = {{ rev_years | tojson }};
+  const rawVals = {{ rev_vals  | tojson }};
+  const growths = {{ rev_growths | tojson }};
+  const vals = rawVals.map(v => parseFloat(String(v).replace(/[^0-9.\-]/g,'')) || 0);
+
+  // colour bars: last bar (most recent) is gold, rest are navy
+  const colours = vals.map((_, i) => i === vals.length - 1 ? 'rgba(201,168,76,.85)' : 'rgba(15,31,61,.65)');
+
   new Chart(document.getElementById('revenueChart'), {
     type: 'bar',
-    data: { labels, datasets: [{ label:'Revenue', data:vals, backgroundColor:'rgba(37,99,235,.7)', borderRadius:4 }] },
-    options: { responsive:true, plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false}}, y:{grid:{color:'rgba(0,0,0,.05)'}} } }
+    data: {
+      labels,
+      datasets: [{
+        label: 'Revenue',
+        data: vals,
+        backgroundColor: colours,
+        borderRadius: 5,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const g = growths[ctx.dataIndex];
+              return ' Revenue: ' + rawVals[ctx.dataIndex] + (g ? '  (YoY: ' + g + ')' : '');
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        y: { grid: { color: 'rgba(0,0,0,.05)' }, ticks: { font: { size: 10 } } }
+      }
+    }
   });
 })();
-{% endif %}
 {% endif %}
 
 // ── Overlay logic ──────────────────────────────────────
