@@ -765,57 +765,248 @@ def _validate_report(report: dict) -> list:
     return gaps
 
 
+def _deep_merge(base: dict, patch: dict) -> dict:
+    """Merge patch into base, only overwriting fields that are empty/bad in base."""
+    result = dict(base)
+    for k, pv in patch.items():
+        bv = base.get(k)
+        if isinstance(pv, dict) and isinstance(bv, dict):
+            result[k] = _deep_merge(bv, pv)
+        elif isinstance(pv, list) and isinstance(bv, list):
+            # If base list is empty or all-empty-string items, use patch list
+            base_has_data = any(
+                any(str(v).strip() for v in (item.values() if isinstance(item, dict) else [item]))
+                for item in bv
+            )
+            if not base_has_data and pv:
+                result[k] = pv
+        elif _is_empty(bv) and not _is_empty(pv):
+            result[k] = pv
+    return result
+
+
+# Country-specific financial portals for targeted research
+_COUNTRY_FINANCE_SITES = {
+    "India":        ["site:screener.in", "site:moneycontrol.com", "site:bseindia.com", "site:nseindia.com", "site:tickertape.in"],
+    "USA":          ["site:sec.gov", "site:macrotrends.net", "site:wisesheets.io", "site:stockanalysis.com"],
+    "UK":           ["site:companieshouse.gov.uk", "site:londonstockexchange.com", "site:marketscreener.com"],
+    "Australia":    ["site:asx.com.au", "site:asic.gov.au"],
+    "Canada":       ["site:sedar.com", "site:tsx.com"],
+    "Germany":      ["site:bundesanzeiger.de", "site:boerse.de"],
+    "Singapore":    ["site:sgx.com", "site:acra.gov.sg"],
+    "Hong Kong":    ["site:hkex.com.hk", "site:cr.gov.hk"],
+}
+
+
 def _targeted_research(company_name: str, ticker: str, sector: str,
                         country: str, missing_fields: list, log=None) -> str:
-    """Run targeted searches for specific missing fields and return extra evidence."""
+    """Aggressive targeted research — tries multiple query styles, country portals,
+    direct site visits, and LLM-suggested queries to fill missing fields."""
     def _log(p, t):
         if log: log(p, t)
 
+    country_sites = _COUNTRY_FINANCE_SITES.get(country, [])
+    cy = __import__('datetime').date.today().year
+
+    # Multiple query variations per field
     field_queries = {
-        "revenue_ttm":          [f"{company_name} annual revenue {ticker} 2024 2025 financial results"],
-        "net_income":           [f"{company_name} net income profit loss 2024 earnings report"],
-        "profit_margin":        [f"{company_name} profit margin EBITDA operating income 2024"],
-        "market_cap":           [f"{company_name} {ticker} market capitalization stock price today"],
-        "current_price":        [f"{company_name} {ticker} stock price current quote 2025"],
-        "ceo":                  [f"{company_name} CEO chief executive officer leadership team 2024"],
-        "employees":            [f"{company_name} number of employees headcount 2024 2025"],
-        "description":          [f"{company_name} company overview business description what they do"],
-        "annual_revenue":       [f"{company_name} revenue 2019 2020 2021 2022 2023 2024 annual report historical"],
-        "overall_sentiment":    [f"{company_name} customer reviews reddit twitter public opinion 2024"],
-        "investment_verdict":   [f"{company_name} analyst rating buy sell hold price target 2024 2025"],
-        "overall_score":        [f"{company_name} financial health score investment rating 2024"],
-        "recent_news":          [f"{company_name} latest news 2025", f"{company_name} news updates {ticker}"],
-        "funding_rounds":       [f"{company_name} funding rounds investment history venture capital raised"],
-        "total_funding_raised": [f"{company_name} total funding raised valuation investors Crunchbase"],
-        "major_shareholders":   [f"{company_name} {ticker} major shareholders ownership structure institutional holders"],
-        "ipo_status":           [f"{company_name} {ticker} IPO date listing stock exchange history"],
-        "recent_ma":            [f"{company_name} acquisition merger divestiture deal 2023 2024 2025"],
+        "revenue_ttm": [
+            f"{company_name} revenue {cy} {cy-1} annual results",
+            f"{company_name} {ticker} quarterly earnings revenue",
+            f"{company_name} total revenue FY{cy} FY{cy-1} financial statement",
+        ],
+        "net_income": [
+            f"{company_name} net profit loss {cy} {cy-1}",
+            f"{company_name} PAT profit after tax {cy}",
+            f"{company_name} {ticker} earnings per share net income",
+        ],
+        "profit_margin": [
+            f"{company_name} EBITDA margin operating profit {cy}",
+            f"{company_name} gross margin net margin profitability",
+        ],
+        "market_cap": [
+            f"{company_name} {ticker} market cap market capitalization",
+            f"{company_name} share price today market value",
+        ],
+        "current_price": [
+            f"{company_name} {ticker} stock price today NSE BSE",
+            f"{company_name} share price current quote",
+        ],
+        "ceo": [
+            f"{company_name} CEO founder MD managing director 2024",
+            f"{company_name} leadership executive team management",
+            f"who is CEO of {company_name}",
+        ],
+        "employees": [
+            f"{company_name} number of employees workforce size 2024",
+            f"{company_name} headcount staff employees LinkedIn",
+            f"{company_name} annual report employees hired",
+        ],
+        "description": [
+            f"{company_name} company profile what is {company_name}",
+            f"{company_name} about us business model products services",
+            f"{company_name} wikipedia overview",
+        ],
+        "annual_revenue": [
+            f"{company_name} revenue history 2020 2021 2022 2023 2024",
+            f"{company_name} annual report revenue growth five year",
+            f"{company_name} {ticker} income statement historical",
+        ],
+        "overall_sentiment": [
+            f"{company_name} customer reviews complaints 2024",
+            f"{company_name} reddit review user experience opinion",
+            f"is {company_name} good bad reviews trustpilot glassdoor",
+        ],
+        "investment_verdict": [
+            f"{company_name} {ticker} analyst recommendation buy sell hold",
+            f"{company_name} stock target price analyst 2024 2025",
+            f"{company_name} investment analysis should I buy",
+        ],
+        "overall_score": [
+            f"{company_name} financial health fundamentals analysis",
+            f"{company_name} {ticker} fundamental analysis valuation",
+        ],
+        "recent_news": [
+            f"{company_name} news 2025",
+            f"{company_name} latest update announcement 2025",
+        ],
+        "funding_rounds": [
+            f"{company_name} funding rounds raised series A B C",
+            f"{company_name} investors venture capital crunchbase",
+        ],
+        "total_funding_raised": [
+            f"{company_name} total funding raised valuation",
+            f"{company_name} how much funding raised investors",
+        ],
+        "major_shareholders": [
+            f"{company_name} {ticker} shareholding pattern promoters institutional",
+            f"{company_name} major investors ownership stake",
+        ],
+        "ipo_status": [
+            f"{company_name} IPO listing date price exchange",
+            f"{company_name} went public stock market debut",
+        ],
+        "recent_ma": [
+            f"{company_name} acquisition merger deal 2023 2024 2025",
+            f"{company_name} acquired bought strategic investment",
+        ],
     }
 
     extra_evidence = []
-    searched = set()
+    searched_urls = set()
+    searched_queries = set()
 
-    for path, _ in missing_fields:
+    # Step 1: Direct priority sources — company website + Wikipedia
+    _log("think", f"[Retry] Checking direct sources for {company_name}…")
+    direct_urls = []
+    # Try company website
+    website_search = _web_search(f"{company_name} official website", max_results=3)
+    for r in website_search:
+        url = r.get("url","")
+        if url and "wikipedia" not in url and company_name.split()[0].lower() in url.lower():
+            direct_urls.append(url)
+            break
+    # Always try Wikipedia
+    wiki_q = f"{company_name} wikipedia"
+    wiki_res = _web_search(wiki_q, max_results=3)
+    for r in wiki_res:
+        if "wikipedia.org" in r.get("url",""):
+            direct_urls.append(r["url"])
+            break
+
+    for url in direct_urls[:2]:
+        if url not in searched_urls:
+            searched_urls.add(url)
+            _log("browse", f"[Retry] Direct: {url}")
+            page = _browse(url, char_limit=5000)
+            if page and not page.startswith("[Browse"):
+                extra_evidence.append(f"[RETRY-DIRECT] SOURCE: {url}\n{page[:4000]}")
+
+    # Step 2: Country-specific financial portals
+    if country_sites and ticker:
+        for site_filter in country_sites[:2]:
+            q = f"{company_name} {ticker} {site_filter}"
+            if q not in searched_queries:
+                searched_queries.add(q)
+                _log("search", f"[Retry] Portal: {q}")
+                results = _web_search(q, max_results=4)
+                for r in results:
+                    extra_evidence.append(f"[{r.get('title','')}] {r.get('snippet','')}\nURL: {r.get('url','')}")
+                top = next((r["url"] for r in results if r.get("url","").startswith("http")), "")
+                if top and top not in searched_urls:
+                    searched_urls.add(top)
+                    _log("browse", f"[Retry] Portal page: {top}")
+                    page = _browse(top, char_limit=4000)
+                    if page and not page.startswith("[Browse"):
+                        extra_evidence.append(f"[RETRY-PORTAL] SOURCE: {top}\n{page[:3000]}")
+                time.sleep(0.3)
+
+    # Step 3: Per-field targeted queries
+    for path, reason in missing_fields:
         key = path.split(".")[-1]
-        queries = field_queries.get(key, [f"{company_name} {key.replace('_',' ')} {country} 2024"])
-        for q in queries:
-            if q in searched:
+        queries = field_queries.get(key, [f"{company_name} {key.replace('_',' ')} {country} {cy}"])
+        _log("think", f"[Retry] Targeting missing: {reason}")
+        for q in queries[:3]:
+            if q in searched_queries:
                 continue
-            searched.add(q)
+            searched_queries.add(q)
             _log("search", f"[Retry] {q}")
-            results = _web_search(q, max_results=5)
+            results = _web_search(q, max_results=6)
             for r in results:
-                extra_evidence.append(f"[{r.get('title','')}] {r.get('snippet','')}\nURL: {r.get('url','')}")
-            top_url = next((r.get("url","") for r in results
-                           if r.get("url","").startswith("http") and "google" not in r.get("url","")), "")
-            if top_url:
-                _log("browse", f"[Retry] Reading: {top_url}")
-                page = _browse(top_url, char_limit=3000)
-                if page and not page.startswith("[Browse failed"):
-                    extra_evidence.append(f"[RETRY] SOURCE: {top_url}\n{page[:2500]}")
-            time.sleep(0.3)
+                snippet = r.get("snippet","")
+                if snippet:
+                    extra_evidence.append(f"[{r.get('title','')}] {snippet}\nURL: {r.get('url','')}")
+            # Browse top 2 results (skip already visited)
+            top_urls = [r["url"] for r in results if r.get("url","").startswith("http")
+                        and "google" not in r.get("url","") and r["url"] not in searched_urls][:2]
+            for url in top_urls:
+                searched_urls.add(url)
+                _log("browse", f"[Retry] Reading: {url}")
+                page = _browse(url, char_limit=3500)
+                if page and not page.startswith("[Browse"):
+                    extra_evidence.append(f"[RETRY] SOURCE: {url}\n{page[:3000]}")
+                time.sleep(0.3)
 
-    return "\n\n".join(extra_evidence)[:12000]
+    # Step 4: Ask LLM to suggest more specific queries for anything still lacking
+    if missing_fields:
+        try:
+            client, model = _get_client()
+            suggestions = client.chat.completions.create(
+                model=model,
+                max_tokens=300,
+                messages=[{
+                    "role": "user",
+                    "content": f"I'm researching {company_name} ({ticker}, {country}, {sector}) and cannot find: {[r for _,r in missing_fields]}. "
+                               f"Give me 5 specific web search queries that would find this data. "
+                               f"Return only a JSON array of strings, no explanation."
+                }]
+            )
+            import re as _re
+            arr_text = suggestions.choices[0].message.content.strip()
+            arr_match = _re.search(r'\[.*?\]', arr_text, _re.DOTALL)
+            if arr_match:
+                suggested = json.loads(arr_match.group())
+                for q in suggested[:5]:
+                    if q not in searched_queries:
+                        searched_queries.add(q)
+                        _log("search", f"[Retry-AI] {q}")
+                        results = _web_search(q, max_results=5)
+                        for r in results:
+                            if r.get("snippet"):
+                                extra_evidence.append(f"[{r.get('title','')}] {r.get('snippet','')}\nURL: {r.get('url','')}")
+                        top = next((r["url"] for r in results if r.get("url","").startswith("http")
+                                   and r["url"] not in searched_urls), "")
+                        if top:
+                            searched_urls.add(top)
+                            _log("browse", f"[Retry-AI] Reading: {top}")
+                            page = _browse(top, char_limit=3500)
+                            if page and not page.startswith("[Browse"):
+                                extra_evidence.append(f"[RETRY-AI] SOURCE: {top}\n{page[:3000]}")
+                        time.sleep(0.3)
+        except Exception as e:
+            _log("think", f"[Retry] AI query suggestion failed: {e}")
+
+    return "\n\n".join(extra_evidence)[:18000]
 
 
 # ── Report generator ──────────────────────────────────────────────────────────
@@ -846,8 +1037,7 @@ def generate_report(company_id: int, log=None) -> dict:
     import datetime
     current_year = datetime.date.today().year
 
-    report = _llm_json(
-        system=f"""You are a senior equity research analyst. Using all web evidence provided,
+    _llm_system = f"""You are a senior equity research analyst. Using all web evidence provided,
 produce a comprehensive company research report for {company_name} ({ticker or 'no ticker'}).
 
 CRITICAL RULES:
@@ -1063,9 +1253,11 @@ Return this exact JSON:
       "accessed": "{__import__('datetime').date.today().isoformat()}"
     }}
   ]
-}}""",
-        user=f"COMPANY: {company_name} ({ticker})\nSECTOR: {sector}\nCOUNTRY: {country}\n\nEVIDENCE:\n{evidence_text}\n\nNote: Populate references[] with ALL URLs found above. Populate data_gaps[] for every missing field. Populate red_flags[] for any anomalies."
-    )
+}}"""
+
+    _llm_user = f"COMPANY: {company_name} ({ticker})\nSECTOR: {sector}\nCOUNTRY: {country}\n\nEVIDENCE:\n{evidence_text}\n\nNote: Populate references[] with ALL URLs found above. Populate data_gaps[] for every missing field. Populate red_flags[] for any anomalies."
+
+    report = _llm_json(system=_llm_system, user=_llm_user)
 
     if "error" in report:
         return report
@@ -1086,18 +1278,20 @@ Return this exact JSON:
             break
         evidence_text = evidence_text + "\n\nADDITIONAL EVIDENCE (retry):\n" + extra_ev
         _log("phase", f"Re-generating report with additional evidence…")
-        retry_report = _llm_json(
-            system=f"""You are a senior equity research analyst. A previous generation attempt left {len(gaps)} critical fields empty.
-Using the ADDITIONAL EVIDENCE provided, fill in the missing fields and return a COMPLETE updated JSON report.
-
-MISSING FIELDS THIS PASS: {[reason for _, reason in gaps]}
-
-Follow the same JSON schema as before. Use "" only for truly unknown fields — never write "Unavailable", "N/A", "Unknown".
-Return the complete JSON (not just the missing sections).""",
-            user=f"COMPANY: {company_name} ({ticker})\nSECTOR: {sector}\nCOUNTRY: {country}\n\nEVIDENCE:\n{evidence_text}\n\nFocus on fixing these missing fields: {[path for path, _ in gaps]}"
-        )
+        # Use full schema + inject partial report so LLM knows what was already found
+        partial_json = json.dumps({k: v for k, v in report.items()
+                                   if k not in ("generated_at","company_name","ticker","_agent_thoughts")},
+                                  indent=None)[:6000]
+        retry_system = _llm_system + f"\n\nIMPORTANT: A previous pass already found some data (shown below as PARTIAL REPORT). Keep all non-empty fields from it. Only fill in the fields listed as MISSING. Return the complete updated JSON.\n\nMISSING FIELDS: {[reason for _,reason in gaps]}"
+        retry_user = (f"COMPANY: {company_name} ({ticker})\nSECTOR: {sector}\nCOUNTRY: {country}\n\n"
+                      f"PARTIAL REPORT (keep all non-empty values):\n{partial_json}\n\n"
+                      f"ADDITIONAL EVIDENCE:\n{extra_ev}\n\n"
+                      f"Fill in these missing fields and return complete JSON: {[p for p,_ in gaps]}")
+        retry_report = _llm_json(system=retry_system, user=retry_user)
         if "error" not in retry_report:
-            report = retry_report
+            # Deep-merge: only overwrite fields that were empty in original
+            report = _deep_merge(report, retry_report)
+            _log("think", f"[Retry {_retry+1}] Merged patch — checking fields again…")
         else:
             _log("think", f"Retry LLM call failed: {retry_report.get('error')} — keeping current report.")
             break
