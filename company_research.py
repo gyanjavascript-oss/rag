@@ -400,68 +400,78 @@ def _research_agent_loop(company_name: str, ticker: str, sector: str,
                           log=None) -> dict:
     client, model = _get_client()
     label = f"{company_name} ({ticker})" if ticker else company_name
-    MAX_ROUNDS = 12
+    MAX_ROUNDS = 18
 
     def _log(p, t):
         if log: log(p, t)
 
     CHECKLIST = f"""
-REQUIRED DATA:
-[ ] Revenue (TTM or last fiscal year)
-[ ] Revenue growth YoY %
-[ ] Net income / profit margin
-[ ] EBITDA
-[ ] Debt-to-equity ratio
-[ ] P/E ratio and EPS
-[ ] Market capitalisation
-[ ] Stock price YTD and 1-year return
-[ ] 52-week high / low
-[ ] Dividend yield (if any)
-[ ] ROE / ROA
-[ ] Number of employees
-[ ] CEO / leadership
-[ ] Main products / services
+REQUIRED DATA (mark each [x] as found):
+FINANCIALS:
+[ ] Revenue TTM + 3-year annual revenue ({current_year-1}, {current_year-2}, {current_year-3})
+[ ] Revenue growth YoY %, net income, profit margin, EBITDA
+[ ] Debt-to-equity, current ratio, P/E, EPS, dividend yield, ROE, ROA
+[ ] Market capitalisation, stock price YTD + 1-year, 52-week high/low, beta
+
+COMPANY DATA:
+[ ] CEO / leadership team, number of employees, founded year
+[ ] Main products / services, headquarters, exchange
 [ ] Key competitors and market position
-[ ] Recent earnings report highlights
-[ ] Annual revenue for {current_year-1}, {current_year-2}, {current_year-3}
 [ ] Analyst ratings / price targets
-[ ] Latest SEC/govt filing highlights (10-K, annual report)
-[ ] Recent news (5+ items)
-[ ] ESG / sustainability score if available
+
+GOVT & COMPLIANCE:
+[ ] Latest annual report / 10-K (year + key highlights)
+[ ] Audit opinion — unqualified / qualified / adverse
+[ ] Tax compliance status ({country} tax authority — any notices, disputes, penalties)
+[ ] Regulatory compliance — industry licences, permits, certifications valid
+[ ] Any regulatory fines, sanctions, enforcement actions
+[ ] Government contracts or grants awarded
+[ ] Bankruptcy / insolvency / winding-up filings
+[ ] Beneficial ownership / UBO disclosures
+
+CLIENTS & MARKET:
 [ ] Major clients / key customers (named if disclosed)
 [ ] Customer concentration risk (% revenue from top clients)
 [ ] Notable partnerships and distribution agreements
+[ ] Recent news (5+ items) including any negative press
+
+DATA QUALITY CHECK:
+[ ] What data is NOT available / hidden / inconsistent?
+[ ] Any discrepancy between company claims and govt/news data?
 """
 
-    system = f"""You are a senior equity research analyst collecting data for {label} ({sector}, {country}).
+    system = f"""You are a senior forensic equity analyst collecting data for {label} ({sector}, {country}).
 
 SOURCE STRATEGY:
-1. First search: "best financial data sites for {country} {sector} company research"
-2. Use discovered sites for all subsequent queries — do NOT default to US-only sites for non-US companies
-3. For govt/regulatory filings search: SEC EDGAR (US), Companies House (UK), MCA (India), SEDAR (Canada), etc.
-4. For social data: Reddit, Twitter/X, Glassdoor, Trustpilot, Google Reviews
-5. Report new sites in "new_sites_found" each round
+1. FIRST: search "best financial data sources {country} {sector} company research {current_year}"
+2. Use discovered sites for all subsequent queries — do NOT default to US-only sites
+3. Govt filings: search the country-specific regulatory portal directly
+4. Tax compliance: search "{company_name} tax {country} penalty notice compliance {current_year}"
+5. Data gaps: actively search for what is NOT reported, inconsistencies, hidden liabilities
+6. Track every useful URL — report in "source_urls" each round
 
 {CHECKLIST}
 
 Each step respond with JSON:
 {{
-  "reasoning": "what found, what still needed",
-  "found_items": ["confirmed checklist items"],
-  "new_sites_found": ["newly discovered domains"],
-  "search_query": "exact next query",
-  "query_type": "financials|stock|filings|news|competitors|management|other",
+  "reasoning": "what found so far, what is STILL MISSING from checklist",
+  "found_items": ["checklist items confirmed this round"],
+  "missing_items": ["checklist items still not found"],
+  "new_sites_found": ["domain.com"],
+  "source_urls": [{{"url":"","title":"","type":"filing|financial|news|registry|tax|other"}}],
+  "search_query": "next search query",
+  "query_type": "financials|stock|filings|tax|compliance|news|clients|competitors|gaps",
   "done": false
 }}
-When done: {{"reasoning":"","found_items":[],"new_sites_found":[],"search_query":"","query_type":"other","done":true}}"""
+Only set done=true when ALL checklist items are attempted (minimum {min(MAX_ROUNDS-2, 14)} rounds)."""
 
     messages = [
         {"role":"system","content":system},
         {"role":"user","content":f"Start research for {label} ({country}) as of {current_month}. First identify the best data sources, then gather all checklist items."}
     ]
 
-    all_results, news_results, browsed_pages, search_history, discovered_sites = [], [], [], [], []
-    _log("phase", f"Research agent starting for {label}…")
+    all_results, news_results, browsed_pages, search_history, discovered_sites, all_source_urls = [], [], [], [], [], []
+    _log("phase", f"Research agent starting for {label} — {MAX_ROUNDS} rounds planned…")
 
     for round_num in range(1, MAX_ROUNDS+1):
         try:
@@ -477,34 +487,49 @@ When done: {{"reasoning":"","found_items":[],"new_sites_found":[],"search_query"
         messages.append({"role":"assistant","content":raw})
         if action.get("reasoning"):
             _log("think", action["reasoning"])
+        if action.get("missing_items"):
+            _log("think", f"Still missing: {', '.join(action['missing_items'][:4])}")
 
         for s in action.get("new_sites_found", []):
             s = s.strip().lower().replace("https://","").replace("http://","").split("/")[0]
             if s and s not in discovered_sites:
                 discovered_sites.append(s)
-                _log("think", f"Discovered source: {s}")
+
+        # Collect source URLs the agent found
+        for su in action.get("source_urls", []):
+            u = su.get("url","").strip()
+            if u and u.startswith("http") and u not in [x["url"] for x in all_source_urls]:
+                all_source_urls.append({"url": u, "title": su.get("title",""), "type": su.get("type","other")})
 
         if action.get("done"):
             _log("done", f"Research complete after {round_num} rounds.")
             break
 
         query = action.get("search_query","").strip()
-        if not query or query in search_history:
-            break
+        if not query:
+            _log("think", "No query returned — skipping round.")
+            continue
+        if query in search_history:
+            _log("think", f"Duplicate query skipped: {query[:60]}")
+            continue
         search_history.append(query)
 
         q_type = action.get("query_type","other")
-        _log("search", f"[{round_num}/{MAX_ROUNDS}] {query}")
+        _log("search", f"[{round_num}/{MAX_ROUNDS}] [{q_type}] {query}")
 
-        results = _web_search(query, max_results=5)
+        results = _web_search(query, max_results=6)
         for r in results:
+            u = r.get("url","")
             try:
                 from urllib.parse import urlparse
-                d = urlparse(r.get("url","")).netloc.lower()
+                d = urlparse(u).netloc.lower()
                 if d and d not in discovered_sites and "google" not in d:
                     discovered_sites.append(d)
             except Exception:
                 pass
+            # auto-collect URLs as references
+            if u and u.startswith("http") and u not in [x["url"] for x in all_source_urls]:
+                all_source_urls.append({"url": u, "title": r.get("title",""), "type": q_type})
             if q_type in ("news",):
                 r["_news"] = True; news_results.append(r)
             else:
@@ -515,26 +540,25 @@ When done: {{"reasoning":"","found_items":[],"new_sites_found":[],"search_query"
         page_text = ""
         if top_url:
             _log("browse", f"Reading: {top_url}")
-            page_text = _browse(top_url, char_limit=3000 if q_type=="financials" else 2000)
+            page_text = _browse(top_url, char_limit=3500 if q_type in ("financials","tax","compliance","filings") else 2500)
             if page_text and not page_text.startswith("[Browse failed"):
-                browsed_pages.append(f"[RESEARCH] SOURCE: {top_url}\n{page_text[:2500]}")
+                browsed_pages.append(f"[RESEARCH] SOURCE: {top_url}\nQUERY_TYPE: {q_type}\n{page_text[:2800]}")
             time.sleep(0.3)
 
         snippets = [f"[{r.get('title','')}] {r.get('snippet','')}\nURL: {r.get('url','')}" for r in results]
-        obs = f"SEARCH RESULTS: {query}\n\n" + "\n\n".join(snippets[:5])
+        obs  = f"ROUND {round_num} RESULTS FOR: {query} [{q_type}]\n\n" + "\n\n".join(snippets[:6])
         if page_text and not page_text.startswith("[Browse failed"):
-            obs += f"\n\nFULL PAGE ({top_url}):\n{page_text[:1200]}"
+            obs += f"\n\nFULL PAGE ({top_url}):\n{page_text[:1500]}"
         if discovered_sites:
-            obs += f"\n\nDISCOVERED SOURCES: {', '.join(discovered_sites[-10:])}"
-        obs += "\n\nWhat is confirmed found? What sites discovered? What to search next?"
+            obs += f"\n\nDISCOVERED SOURCES SO FAR: {', '.join(discovered_sites[-12:])}"
+        obs += f"\n\nRound {round_num}/{MAX_ROUNDS} done. What checklist items found? What is STILL MISSING? Next query?"
         messages.append({"role":"user","content":obs})
 
     # Save learnings
-    if discovered_sites:
-        messages.append({"role":"system","content":f"[META] country={country} sector={sector} discovered_sites={discovered_sites}"})
     threading.Thread(target=_save_memories, args=(sector, ticker, search_history, browsed_pages, messages), daemon=True).start()
 
-    return {"search_results": all_results, "news_results": news_results, "browsed_pages": browsed_pages}
+    return {"search_results": all_results, "news_results": news_results,
+            "browsed_pages": browsed_pages, "source_urls": all_source_urls}
 
 
 def _save_memories(sector: str, ticker: str, search_history: list, browsed_pages: list, messages: list):
@@ -660,6 +684,7 @@ def _gather_evidence(company_name: str, ticker: str, sector: str, country: str,
         "search_results": evidence["search_results"],
         "news_results": evidence["news_results"],
         "browsed_pages": evidence["browsed_pages"] + govt_pages + social + uploaded,
+        "source_urls": evidence.get("source_urls", []),
     }
 
 
@@ -678,9 +703,13 @@ def _build_evidence_text(ev: dict) -> str:
             seen.add(u)
             lines.append(f"[NEWS] {r.get('title','')} — {r.get('snippet','')}\nURL: {u}")
     lines.append("\n── FULL PAGES ──")
-    for page in ev.get("browsed_pages", [])[:10]:
-        lines.append(page[:1800])
-    return "\n\n".join(lines)[:24000]
+    for page in ev.get("browsed_pages", [])[:12]:
+        lines.append(page[:2000])
+    if ev.get("source_urls"):
+        lines.append("\n── ALL SOURCE URLS FOUND ──")
+        for su in ev["source_urls"][:60]:
+            lines.append(f"[{su.get('type','').upper()}] {su.get('title','')} — {su.get('url','')}")
+    return "\n\n".join(lines)[:28000]
 
 
 # ── Report generator ──────────────────────────────────────────────────────────
@@ -724,9 +753,13 @@ CRITICAL RULES:
 6. financial score weights: revenue_growth 25%, profitability 25%, debt_health 20%, efficiency 15%, valuation 15%.
 7. investment_verdict: "Strong Buy|Buy|Hold|Sell|Avoid" based on overall_score (80+=Strong Buy, 65+=Buy, 45+=Hold, 30+=Sell, <30=Avoid).
 8. Evidence marked [GOVT PDF] or [UPLOADED DOC] is highly authoritative — prioritise these over web snippets.
-9. If auditor's report is found, extract the audit opinion (unqualified/qualified/adverse) and note it in key_filing_highlights.
-10. If govt contracts or regulatory fines are found in evidence, populate govt_contracts and regulatory_actions arrays.
-11. clients.notable_clients: list every named client/customer found — from annual reports, press releases, case studies, filings. Include revenue contribution % if known.
+9. Audit opinion: extract unqualified/qualified/adverse from evidence; note in both public_registry.audit_opinion and key_filing_highlights.
+10. Populate govt_contracts and regulatory_actions if evidence found; add their URLs to govt_document_links.
+11. clients.notable_clients: list every named client/customer found in filings, press releases, case studies.
+12. data_gaps: list EVERY field or section where data was unavailable, unclear, or suspicious from govt/news.
+13. red_flags: list concrete anomalies found — discrepancies between company claims and govt/news data, unexplained changes, hidden liabilities, tax disputes, related-party transactions, insider selling, etc.
+14. references: include ALL source URLs found during research — every govt portal, filing, news article, financial data page.
+15. Tax compliance: check {country} tax authority for any notices, disputes, deferred taxes, penalties — report in regulatory_filings.regulatory_actions.
 
 Return this exact JSON:
 {{
@@ -775,7 +808,27 @@ Return this exact JSON:
     "key_filing_highlights": [],
     "legal_issues": [],
     "govt_contracts": [],
-    "regulatory_actions": []
+    "regulatory_actions": [],
+    "govt_document_links": [
+      {{"title":"","url":"","type":"annual_report|audit_report|10-K|20-F|prospectus|regulatory_notice|govt_contract|other","date":"","portal":""}}
+    ]
+  }},
+  "public_registry": {{
+    "registration_status": "Active|Inactive|Dissolved|Suspended|Unknown",
+    "registration_number": "",
+    "registered_name": "",
+    "incorporation_date": "",
+    "registered_address": "",
+    "directors": [
+      {{"name":"","role":"","appointed":""}}
+    ],
+    "filing_status": "Up to date|Overdue|Unknown",
+    "last_filed": "",
+    "share_capital": "",
+    "auditor": "",
+    "audit_opinion": "Unqualified|Qualified|Adverse|Disclaimer|Unknown",
+    "registry_url": "",
+    "notes": ""
   }},
   "clients": {{
     "notable_clients": [
@@ -846,9 +899,35 @@ Return this exact JSON:
     "sources_found": 0,
     "completeness": "High|Medium|Low",
     "caveats": []
-  }}
+  }},
+  "data_gaps": [
+    {{
+      "field": "name of missing field or section",
+      "expected_source": "where this should be found",
+      "why_missing": "not disclosed / portal blocked / data not available / suspicious omission",
+      "severity": "High|Medium|Low"
+    }}
+  ],
+  "red_flags": [
+    {{
+      "flag": "short headline of the red flag",
+      "detail": "full explanation with evidence",
+      "source": "URL or source where this was found",
+      "category": "financial|tax|legal|governance|operational|disclosure",
+      "severity": "Critical|High|Medium|Low"
+    }}
+  ],
+  "references": [
+    {{
+      "title": "",
+      "url": "",
+      "type": "annual_report|audit|filing|tax|news|financial|registry|contract|other",
+      "portal": "",
+      "accessed": "{__import__('datetime').date.today().isoformat()}"
+    }}
+  ]
 }}""",
-        user=f"COMPANY: {company_name} ({ticker})\nSECTOR: {sector}\nCOUNTRY: {country}\n\nEVIDENCE:\n{evidence_text}"
+        user=f"COMPANY: {company_name} ({ticker})\nSECTOR: {sector}\nCOUNTRY: {country}\n\nEVIDENCE:\n{evidence_text}\n\nNote: Populate references[] with ALL URLs found above. Populate data_gaps[] for every missing field. Populate red_flags[] for any anomalies."
     )
 
     if "error" in report:

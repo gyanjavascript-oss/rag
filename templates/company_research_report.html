@@ -139,12 +139,16 @@
 {% set sp  = report.get('stock_performance',{}) %}
 {% set ss  = report.get('social_sentiment',{}) %}
 {% set rv  = report.get('customer_reviews',{}) %}
-{% set cp  = report.get('competitive_position',{}) %}
-{% set cl  = report.get('clients',{}) %}
-{% set ra  = report.get('risk_assessment',{}) %}
-{% set go  = report.get('growth_outlook',{}) %}
-{% set rf  = report.get('regulatory_filings',{}) %}
-{% set BAD = ['','unavailable','n/a','unknown','none','-','—'] %}
+{% set cp   = report.get('competitive_position',{}) %}
+{% set cl   = report.get('clients',{}) %}
+{% set ra   = report.get('risk_assessment',{}) %}
+{% set go   = report.get('growth_outlook',{}) %}
+{% set rf   = report.get('regulatory_filings',{}) %}
+{% set pr   = report.get('public_registry',{}) %}
+{% set dg   = report.get('data_gaps',[]) %}
+{% set rfl  = report.get('red_flags',[]) %}
+{% set refs = report.get('references',[]) %}
+{% set BAD  = ['','unavailable','n/a','unknown','none','-','—'] %}
 
 <!-- Hero -->
 <div class="co-hero">
@@ -397,9 +401,9 @@
 </div>
 
 <!-- Clients & Partnerships -->
-{% set notable_clients = cl.get('notable_clients',[]) | selectattr('name') | list %}
-{% set key_partners = cl.get('key_partnerships',[]) | selectattr('partner') | list %}
-{% if notable_clients or key_partners or cl.get('customer_concentration') %}
+{% set notable_clients = (cl.get('notable_clients') or []) | selectattr('name') | list %}
+{% set key_partners    = (cl.get('key_partnerships') or []) | selectattr('partner') | list %}
+{% if notable_clients or key_partners or cl.get('customer_concentration') or cl.get('distribution_channels') or cl.get('client_retention_note') %}
 <div class="r-card" style="margin-bottom:1.25rem;">
   <div class="r-card-head" style="justify-content:space-between;">
     <span>🤝 Clients & Partnerships</span>
@@ -548,20 +552,170 @@
 </div>
 {% endif %}
 
+<!-- Public Registry -->
+{% if pr.get('registration_status') or pr.get('registration_number') or pr.get('directors') %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head" style="justify-content:space-between;">
+    <span>🏛 Public Registry Data</span>
+    {% if pr.get('registry_url') %}
+    <a href="{{ pr.get('registry_url') }}" target="_blank" rel="noopener" style="font-size:.72rem;color:var(--gold);font-weight:600;text-decoration:none;">View Registry ↗</a>
+    {% endif %}
+  </div>
+  <div class="r-card-body">
+    <div class="r-grid" style="margin-bottom:.75rem;">
+      {% set reg_items = [
+        ('Status', pr.get('registration_status')),
+        ('Reg No.', pr.get('registration_number')),
+        ('Incorporated', pr.get('incorporation_date')),
+        ('Filing Status', pr.get('filing_status')),
+        ('Last Filed', pr.get('last_filed')),
+        ('Share Capital', pr.get('share_capital')),
+        ('Auditor', pr.get('auditor')),
+        ('Audit Opinion', pr.get('audit_opinion')),
+      ] %}
+      {% for label, val in reg_items %}
+      {% if val and val|lower not in BAD %}
+      <div style="padding:.45rem .7rem;background:var(--bg2);border-radius:6px;">
+        <div style="font-size:.65rem;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:.2rem;">{{ label }}</div>
+        <div style="font-size:.85rem;font-weight:600;
+          {% if label=='Status' and val=='Active' %}color:#059669;
+          {% elif label=='Status' %}color:#dc2626;
+          {% elif label=='Audit Opinion' and val=='Unqualified' %}color:#059669;
+          {% elif label=='Audit Opinion' and val in ['Qualified','Adverse','Disclaimer'] %}color:#dc2626;
+          {% elif label=='Filing Status' and val=='Overdue' %}color:#dc2626;
+          {% else %}color:var(--navy);{% endif %}">{{ val }}</div>
+      </div>{% endif %}{% endfor %}
+    </div>
+    {% if pr.get('registered_address') and pr.get('registered_address')|lower not in BAD %}
+    <div style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem;">📍 {{ pr.get('registered_address') }}</div>{% endif %}
+    {% set dirs = pr.get('directors',[]) | selectattr('name') | list %}
+    {% if dirs %}
+    <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.4rem;">Directors / Officers</div>
+    <div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.5rem;">
+      {% for d in dirs %}
+      <div style="background:var(--white);border:1px solid var(--border);border-radius:5px;padding:.35rem .65rem;font-size:.78rem;">
+        <span style="font-weight:600;color:var(--navy);">{{ d.get('name') }}</span>
+        {% if d.get('role') %}<span style="color:var(--muted);margin-left:.3rem;">· {{ d.get('role') }}</span>{% endif %}
+        {% if d.get('appointed') %}<span style="color:var(--muted);font-size:.68rem;margin-left:.3rem;">since {{ d.get('appointed') }}</span>{% endif %}
+      </div>{% endfor %}
+    </div>{% endif %}
+    {% if pr.get('notes') and pr.get('notes')|lower not in BAD %}
+    <div style="font-size:.78rem;color:var(--muted);padding:.45rem .7rem;border-left:3px solid var(--gold);background:rgba(201,168,76,.05);">{{ pr.get('notes') }}</div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
 <!-- Regulatory / Filings -->
-{% set filings = rf.get('key_filing_highlights',[]) %}
-{% set legal   = rf.get('legal_issues',[]) %}
-{% if filings or legal %}
+{% set filings  = rf.get('key_filing_highlights',[]) %}
+{% set legal    = rf.get('legal_issues',[]) %}
+{% set reg_acts = rf.get('regulatory_actions',[]) %}
+{% set doc_links = rf.get('govt_document_links',[]) | selectattr('url') | list %}
+{% if filings or legal or reg_acts or doc_links %}
 <div class="r-card" style="margin-bottom:1.25rem;">
   <div class="r-card-head">📄 Regulatory & Government Filings</div>
   <div class="r-card-body">
     {% if rf.get('latest_annual_report_year') %}<div style="font-size:.8rem;color:var(--muted);margin-bottom:.65rem;">Latest annual report: <strong style="color:var(--navy);">{{ rf.get('latest_annual_report_year') }}</strong></div>{% endif %}
+    {% if doc_links %}
+    <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.4rem;">Official Documents</div>
+    <div style="display:flex;flex-direction:column;gap:.3rem;margin-bottom:.85rem;">
+      {% for d in doc_links %}
+      <div style="display:flex;align-items:center;gap:.6rem;padding:.4rem .65rem;background:var(--bg2);border-radius:5px;">
+        <span style="font-size:.7rem;padding:.1rem .4rem;border-radius:3px;font-weight:700;background:rgba(15,31,61,.08);color:var(--navy);flex-shrink:0;">{{ d.get('type','doc')|upper }}</span>
+        <a href="{{ d.get('url') }}" target="_blank" rel="noopener" style="font-size:.8rem;color:var(--accent);flex:1;word-break:break-all;">{{ d.get('title') or d.get('url') }}</a>
+        {% if d.get('date') and d.get('date')|lower not in BAD %}<span style="font-size:.7rem;color:var(--muted);flex-shrink:0;">{{ d.get('date') }}</span>{% endif %}
+        {% if d.get('portal') and d.get('portal')|lower not in BAD %}<span style="font-size:.68rem;color:var(--muted);flex-shrink:0;">{{ d.get('portal') }}</span>{% endif %}
+      </div>{% endfor %}
+    </div>{% endif %}
     {% if filings %}
     <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.35rem;">Key Filing Highlights</div>
     {% for h in filings %}<div style="font-size:.82rem;color:var(--muted);padding:.3rem 0;border-bottom:1px solid var(--border);">• {{ h }}</div>{% endfor %}{% endif %}
+    {% if reg_acts %}
+    <div style="font-size:.7rem;font-weight:700;color:#d97706;text-transform:uppercase;margin:.75rem 0 .35rem;">Regulatory Actions</div>
+    {% for a in reg_acts %}<div style="font-size:.82rem;color:var(--muted);padding:.25rem 0;">⚠ {{ a }}</div>{% endfor %}{% endif %}
     {% if legal %}
     <div style="font-size:.7rem;font-weight:700;color:#dc2626;text-transform:uppercase;margin:.75rem 0 .35rem;">Legal Issues</div>
     {% for l in legal %}<div style="font-size:.82rem;color:var(--muted);">• {{ l }}</div>{% endfor %}{% endif %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Red Flags -->
+{% set critical_flags = rfl | selectattr('severity','equalto','Critical') | list %}
+{% set high_flags = rfl | selectattr('severity','equalto','High') | list %}
+{% if rfl %}
+<div class="r-card" style="margin-bottom:1.25rem;border-color:#fca5a5;">
+  <div class="r-card-head" style="background:#fef2f2;color:#991b1b;">
+    🚨 Red Flags & Hidden Risks
+    {% if critical_flags %}<span style="margin-left:.5rem;font-size:.7rem;padding:.15rem .45rem;border-radius:3px;background:#fee2e2;color:#991b1b;font-weight:700;">{{ critical_flags|length }} Critical</span>{% endif %}
+    {% if high_flags %}<span style="margin-left:.35rem;font-size:.7rem;padding:.15rem .45rem;border-radius:3px;background:#ffedd5;color:#c2410c;font-weight:700;">{{ high_flags|length }} High</span>{% endif %}
+  </div>
+  <div class="r-card-body" style="display:flex;flex-direction:column;gap:.6rem;">
+    {% for f in rfl %}
+    <div style="padding:.65rem .85rem;border-radius:6px;border-left:4px solid
+      {% if f.get('severity')=='Critical' %}#dc2626{% elif f.get('severity')=='High' %}#f97316{% elif f.get('severity')=='Medium' %}#eab308{% else %}#94a3b8{% endif %};">
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.25rem;flex-wrap:wrap;">
+        <span style="font-size:.85rem;font-weight:700;color:var(--navy);">{{ f.get('flag') }}</span>
+        <span style="font-size:.68rem;padding:.1rem .4rem;border-radius:3px;font-weight:700;
+          {% if f.get('severity')=='Critical' %}background:#fee2e2;color:#991b1b;
+          {% elif f.get('severity')=='High' %}background:#ffedd5;color:#c2410c;
+          {% elif f.get('severity')=='Medium' %}background:#fef9c3;color:#854d0e;
+          {% else %}background:#f1f5f9;color:#475569;{% endif %}">{{ f.get('severity') }}</span>
+        {% if f.get('category') %}<span style="font-size:.65rem;color:var(--muted);text-transform:uppercase;">{{ f.get('category') }}</span>{% endif %}
+      </div>
+      {% if f.get('detail') and f.get('detail')|lower not in BAD %}
+      <div style="font-size:.8rem;color:var(--muted);line-height:1.55;">{{ f.get('detail') }}</div>{% endif %}
+      {% if f.get('source') and f.get('source').startswith('http') %}
+      <a href="{{ f.get('source') }}" target="_blank" rel="noopener" style="font-size:.72rem;color:var(--accent);margin-top:.3rem;display:block;">Source ↗</a>{% endif %}
+    </div>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Data Gaps -->
+{% if dg %}
+<div class="r-card" style="margin-bottom:1.25rem;border-color:#e2e8f0;">
+  <div class="r-card-head" style="background:#f8fafc;">🔍 Data Gaps & Missing Information</div>
+  <div class="r-card-body">
+    <div style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem;">The following data could not be verified or was not publicly disclosed:</div>
+    <div style="display:flex;flex-direction:column;gap:.4rem;">
+      {% for g in dg %}
+      <div style="display:flex;align-items:flex-start;gap:.65rem;padding:.5rem .75rem;background:var(--bg2);border-radius:5px;">
+        <span style="font-size:.68rem;padding:.15rem .4rem;border-radius:3px;font-weight:700;flex-shrink:0;
+          {% if g.get('severity')=='High' %}background:#fee2e2;color:#991b1b;
+          {% elif g.get('severity')=='Medium' %}background:#fef9c3;color:#854d0e;
+          {% else %}background:#f1f5f9;color:#475569;{% endif %}">{{ g.get('severity','?') }}</span>
+        <div style="flex:1;">
+          <div style="font-size:.82rem;font-weight:600;color:var(--navy);">{{ g.get('field') }}</div>
+          {% if g.get('expected_source') and g.get('expected_source')|lower not in BAD %}
+          <div style="font-size:.72rem;color:var(--muted);">Expected: {{ g.get('expected_source') }}</div>{% endif %}
+          {% if g.get('why_missing') and g.get('why_missing')|lower not in BAD %}
+          <div style="font-size:.75rem;color:var(--muted);font-style:italic;">{{ g.get('why_missing') }}</div>{% endif %}
+        </div>
+      </div>{% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- References -->
+{% set valid_refs = refs | selectattr('url') | list %}
+{% if valid_refs %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head" style="cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+    🔗 References & Sources <span style="font-size:.72rem;color:var(--muted);font-weight:400;">{{ valid_refs|length }} sources</span>
+    <span style="margin-left:auto;font-size:.78rem;color:var(--muted);">▼ Show</span>
+  </div>
+  <div style="display:none;padding:1rem 1.25rem;">
+    {% set type_order = ['annual_report','audit','filing','tax','registry','financial','news','contract','other'] %}
+    {% for rtype in type_order %}
+    {% set group = valid_refs | selectattr('type','equalto',rtype) | list %}
+    {% if group %}
+    <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;color:var(--muted);margin:.6rem 0 .3rem;letter-spacing:.06em;">{{ rtype|replace('_',' ') }}</div>
+    {% for r in group %}
+    <div style="display:flex;align-items:baseline;gap:.5rem;padding:.25rem 0;border-bottom:1px solid var(--bg2);">
+      <a href="{{ r.get('url') }}" target="_blank" rel="noopener" style="font-size:.78rem;color:var(--accent);flex:1;word-break:break-word;">{{ r.get('title') or r.get('url') }}</a>
+      {% if r.get('portal') and r.get('portal')|lower not in BAD %}<span style="font-size:.68rem;color:var(--muted);flex-shrink:0;">{{ r.get('portal') }}</span>{% endif %}
+    </div>{% endfor %}{% endif %}{% endfor %}
   </div>
 </div>
 {% endif %}
