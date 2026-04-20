@@ -140,6 +140,7 @@
 {% set ss  = report.get('social_sentiment',{}) %}
 {% set rv  = report.get('customer_reviews',{}) %}
 {% set cp  = report.get('competitive_position',{}) %}
+{% set cl  = report.get('clients',{}) %}
 {% set ra  = report.get('risk_assessment',{}) %}
 {% set go  = report.get('growth_outlook',{}) %}
 {% set rf  = report.get('regulatory_filings',{}) %}
@@ -394,6 +395,76 @@
     </div>
   </div>
 </div>
+
+<!-- Clients & Partnerships -->
+{% set notable_clients = cl.get('notable_clients',[]) | selectattr('name') | list %}
+{% set key_partners = cl.get('key_partnerships',[]) | selectattr('partner') | list %}
+{% if notable_clients or key_partners or cl.get('customer_concentration') %}
+<div class="r-card" style="margin-bottom:1.25rem;">
+  <div class="r-card-head" style="justify-content:space-between;">
+    <span>🤝 Clients & Partnerships</span>
+    {% if cl.get('client_acquisition_trend') and cl.get('client_acquisition_trend') != 'Unknown' %}
+    <span style="font-size:.72rem;padding:.15rem .55rem;border-radius:4px;font-weight:700;
+      {% if cl.get('client_acquisition_trend')=='Growing' %}background:#d1fae5;color:#065f46;
+      {% elif cl.get('client_acquisition_trend')=='Declining' %}background:#fee2e2;color:#991b1b;
+      {% else %}background:#fef3c7;color:#92400e;{% endif %}">
+      {{ cl.get('client_acquisition_trend') }}
+    </span>
+    {% endif %}
+  </div>
+  <div class="r-card-body">
+    {% if cl.get('customer_concentration') and cl.get('customer_concentration')|lower not in BAD %}
+    <div style="font-size:.82rem;color:var(--muted);margin-bottom:.75rem;padding:.55rem .85rem;background:var(--bg2);border-radius:6px;">
+      <strong style="color:var(--navy);">Customer Concentration:</strong> {{ cl.get('customer_concentration') }}
+      {% if cl.get('top_client_revenue_pct') and cl.get('top_client_revenue_pct')|lower not in BAD %}
+      · Top client: <strong>{{ cl.get('top_client_revenue_pct') }}</strong> of revenue
+      {% endif %}
+    </div>{% endif %}
+
+    {% if notable_clients %}
+    <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.5rem;">Notable Clients</div>
+    <div style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.85rem;">
+      {% for c in notable_clients %}
+      <div style="display:flex;align-items:flex-start;gap:.75rem;padding:.55rem .85rem;background:var(--bg2);border-radius:6px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:120px;">
+          <div style="font-size:.85rem;font-weight:700;color:var(--navy);">{{ c.get('name') }}</div>
+          {% if c.get('sector') and c.get('sector')|lower not in BAD %}<div style="font-size:.72rem;color:var(--muted);">{{ c.get('sector') }}</div>{% endif %}
+        </div>
+        {% if c.get('relationship') and c.get('relationship')|lower not in BAD %}
+        <div style="font-size:.78rem;color:var(--muted);flex:2;">{{ c.get('relationship') }}</div>{% endif %}
+        <div style="display:flex;gap:.4rem;align-items:center;flex-shrink:0;">
+          {% if c.get('revenue_contribution') and c.get('revenue_contribution')|lower not in BAD %}
+          <span style="font-size:.7rem;font-weight:700;padding:.15rem .45rem;border-radius:3px;background:rgba(37,99,235,.1);color:#2563eb;">{{ c.get('revenue_contribution') }}</span>{% endif %}
+          {% if c.get('since') and c.get('since')|lower not in BAD %}
+          <span style="font-size:.7rem;color:var(--muted);">since {{ c.get('since') }}</span>{% endif %}
+        </div>
+      </div>{% endfor %}
+    </div>{% endif %}
+
+    {% if cl.get('distribution_channels') %}
+    <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.35rem;">Distribution Channels</div>
+    <div class="tag-list" style="margin-bottom:.85rem;">
+      {% for ch in cl.get('distribution_channels',[]) %}<span class="tag">{{ ch }}</span>{% endfor %}
+    </div>{% endif %}
+
+    {% if key_partners %}
+    <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:.4rem;">Key Partnerships</div>
+    <div style="display:flex;flex-wrap:wrap;gap:.5rem;">
+      {% for p in key_partners %}
+      <div style="background:var(--white);border:1px solid var(--border);border-radius:6px;padding:.45rem .75rem;font-size:.8rem;max-width:260px;">
+        <div style="font-weight:700;color:var(--navy);">{{ p.get('partner') }}</div>
+        {% if p.get('type') and p.get('type')|lower not in BAD %}<div style="font-size:.7rem;color:var(--muted);">{{ p.get('type') }}</div>{% endif %}
+        {% if p.get('description') and p.get('description')|lower not in BAD %}<div style="font-size:.75rem;color:var(--muted);margin-top:.2rem;">{{ p.get('description') }}</div>{% endif %}
+      </div>{% endfor %}
+    </div>{% endif %}
+
+    {% if cl.get('client_retention_note') and cl.get('client_retention_note')|lower not in BAD %}
+    <div style="font-size:.78rem;color:var(--muted);margin-top:.75rem;padding:.5rem .75rem;border-left:3px solid var(--gold);background:rgba(201,168,76,.05);">
+      {{ cl.get('client_retention_note') }}
+    </div>{% endif %}
+  </div>
+</div>
+{% endif %}
 
 <!-- Competitive Position -->
 {% if cp.get('main_competitors') or cp.get('strengths') or cp.get('weaknesses') %}

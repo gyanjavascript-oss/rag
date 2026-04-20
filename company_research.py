@@ -206,21 +206,81 @@ def _govt_filings_agent_loop(company_name: str, ticker: str, sector: str,
     def _log(p, t):
         if log: log(p, t)
 
-    # Country-to-portal hints (agent discovers more dynamically)
+    # Country-to-portal map — agent also discovers additional portals dynamically
     PORTAL_HINTS = {
-        "USA": "SEC EDGAR (edgar.sec.gov), PCAOB, FTC filings",
-        "UK": "Companies House (find-and-update.company-information.service.gov.uk), FCA register",
-        "India": "BSE (bseindia.com), NSE (nseindia.com), MCA (mca.gov.in), SEBI",
-        "Canada": "SEDAR+ (sedarplus.ca), OSFI",
-        "Australia": "ASIC (asic.gov.au), ASX (asx.com.au)",
-        "Germany": "Bundesanzeiger (bundesanzeiger.de), BaFin",
-        "France": "AMF (amf-france.org), Infogreffe",
-        "Japan": "EDINET (edinet-fsa.go.jp), TSE",
-        "China": "CSRC, CNINFO (cninfo.com.cn), SSE/SZSE",
-        "Singapore": "SGX (sgx.com), ACRA (bizfile.gov.sg)",
-        "Hong Kong": "HKEX (hkex.com.hk), SFC",
+        # Americas
+        "USA":          "SEC EDGAR (edgar.sec.gov), PCAOB, FTC, USASpending.gov (govt contracts), SAM.gov",
+        "Canada":       "SEDAR+ (sedarplus.ca), OSFI (osfi-bsif.gc.ca), CIRO, CanadaBuys.canada.ca",
+        "Brazil":       "CVM (cvm.gov.br), B3 (b3.com.br), JUCEB, Receita Federal, TCU (tcu.gov.br)",
+        "Mexico":       "BMV (bmv.com.mx), CNBV (cnbv.gob.mx), IMSS, Compranet (compranet.hacienda.gob.mx)",
+        "Argentina":    "CNV (cnv.gov.ar), BCRA, Bolsar (bolsar.com), InfoLEG",
+        "Chile":        "CMF (cmfchile.cl), Santiago Stock Exchange (bolsadesantiago.com), ChileCompra",
+        "Colombia":     "Superfinanciera (superfinanciera.gov.co), BVC (bvc.com.co), SECOP",
+        "Peru":         "SMV (smv.gob.pe), BVL (bvl.com.pe), OSCE (osce.gob.pe)",
+        # Europe
+        "UK":           "Companies House (find-and-update.company-information.service.gov.uk), FCA (fca.org.uk), London Stock Exchange, Find a Tender (find-tender.service.gov.uk)",
+        "Germany":      "Bundesanzeiger (bundesanzeiger.de), BaFin (bafin.de), Deutsche Börse, DTVP procurement",
+        "France":       "AMF (amf-france.org), Infogreffe (infogreffe.fr), Euronext Paris, BOAMP (boamp.fr)",
+        "Italy":        "Consob (consob.it), Borsa Italiana (borsaitaliana.it), Registro Imprese, ANAC (anac.it)",
+        "Spain":        "CNMV (cnmv.es), BME (bolsasymercados.es), BORME (boe.es), PLACE (contrataciondelestado.es)",
+        "Netherlands":  "AFM (afm.nl), Euronext Amsterdam, KvK (kvk.nl), TenderNed",
+        "Sweden":       "FI (fi.se), Nasdaq Stockholm, Bolagsverket (bolagsverket.se), Upphandlingsmyndigheten",
+        "Norway":       "Finanstilsynet (finanstilsynet.no), Oslo Børs (oslobors.no), Brønnøysund (brreg.no), Doffin",
+        "Denmark":      "Finanstilsynet (finanstilsynet.dk), Nasdaq Copenhagen, CVR (cvr.dk), Udbudsportalen",
+        "Finland":      "FIN-FSA (finanssivalvonta.fi), Nasdaq Helsinki, PRH (prh.fi), HILMA procurement",
+        "Switzerland":  "FINMA (finma.ch), SIX Exchange (six-group.com), Zefix (zefix.ch)",
+        "Austria":      "FMA (fma.gv.at), Vienna Stock Exchange (wienerborse.at), Firmenbuch",
+        "Belgium":      "FSMA (fsma.be), Euronext Brussels, CBE, e-Procurement (publicprocurement.be)",
+        "Poland":       "KNF (knf.gov.pl), GPW Warsaw (gpw.pl), KRS (krs.ms.gov.pl), BZP procurement",
+        "Czech Republic": "CNB (cnb.cz), Prague Stock Exchange (pse.cz), OR justice, NEN procurement",
+        "Portugal":     "CMVM (cmvm.pt), Euronext Lisbon, BASE (base.gov.pt) procurement",
+        "Greece":       "HCMC (hcmc.gr), Athens Stock Exchange (athexgroup.gr), KIMDIS, ESIDIS",
+        "Ireland":      "CBI (centralbank.ie), Euronext Dublin, CRO (cro.ie), eTenders",
+        "Romania":      "ASF (asfromania.ro), BVB (bvb.ro), ONRC (onrc.ro), SICAP procurement",
+        "Hungary":      "MNB (mnb.hu), BSE (bse.hu), Cégbíróság, EKR procurement",
+        "Turkey":       "SPK (spk.gov.tr), BIST (borsaistanbul.com), MERSİS, EKAP procurement",
+        "Russia":       "CBR (cbr.ru), Moscow Exchange (moex.com), EGRUL, Zakupki.gov.ru",
+        "Ukraine":      "NSSMC (nssmc.gov.ua), USE, ProZorro (prozorro.gov.ua)",
+        # Asia-Pacific
+        "India":        "BSE (bseindia.com), NSE (nseindia.com), MCA21 (mca.gov.in), SEBI (sebi.gov.in), GeM (gem.gov.in)",
+        "China":        "CSRC (csrc.gov.cn), CNINFO (cninfo.com.cn), SSE (sse.com.cn), SZSE (szse.cn), CCGP procurement",
+        "Japan":        "EDINET (edinet-fsa.go.jp), TSE (jpx.co.jp), e-Gov, JETRO, METI",
+        "South Korea":  "FSS DART (dart.fss.or.kr), KRX (krx.co.kr), Kisline, KONEPS (g2b.go.kr)",
+        "Hong Kong":    "HKEX (hkex.com.hk), SFC (sfc.hk), CR (cr.gov.hk), GovHK eTendering",
+        "Singapore":    "SGX (sgx.com), MAS (mas.gov.sg), ACRA (bizfile.gov.sg), GeBIZ (gebiz.gov.sg)",
+        "Australia":    "ASIC (asic.gov.au), ASX (asx.com.au), AUSTRAC, AusTender (tenders.gov.au)",
+        "New Zealand":  "FMA (fma.govt.nz), NZX (nzx.com), Companies Register (companiesoffice.govt.nz), GETS",
+        "Malaysia":     "SC (sc.com.my), Bursa Malaysia (bursamalaysia.com), SSM (ssm.com.my), MyProcurement",
+        "Indonesia":    "OJK (ojk.go.id), IDX (idx.co.id), AHU (ahu.go.id), LPSE procurement",
+        "Thailand":     "SEC (sec.or.th), SET (set.or.th), DBD (dbd.go.th), GPP procurement",
+        "Philippines":  "SEC (sec.gov.ph), PSE (pse.com.ph), PhilGEPS (philgeps.gov.ph)",
+        "Vietnam":      "SSC (ssc.gov.vn), HNX (hnx.vn), HOSE, National Procurement Portal",
+        "Taiwan":       "FSC (fsc.gov.tw), TWSE (twse.com.tw), OTC (tpex.org.tw), TPAM procurement",
+        "Pakistan":     "SECP (secp.gov.pk), PSX (psx.com.pk), PPRA (ppra.org.pk)",
+        "Bangladesh":   "BSEC (sec.gov.bd), DSE (dsebd.org), RJSC, CPTU procurement",
+        "Sri Lanka":    "SEC (sec.gov.lk), CSE (cse.lk), DRAFTSMAN, NPC procurement",
+        # Middle East & Africa
+        "UAE":          "SCA (sca.gov.ae), DFM (dfm.ae), ADX (adx.ae), Tejari procurement",
+        "Saudi Arabia": "CMA (cma.org.sa), Saudi Exchange (tadawul.com.sa), GOSI, Etimad (etimad.sa)",
+        "Qatar":        "QFMA (qfma.org.qa), QSE (qse.com.qa), Hukoomi, MOF tenders",
+        "Kuwait":       "CMA (cma.gov.kw), Boursa Kuwait (boursakuwait.com.kw), MOCI",
+        "Bahrain":      "CBB (cbb.gov.bh), Bahrain Bourse (bahrainbourse.com), Sijilat",
+        "Oman":         "CMA (cma.gov.om), MSX (msx.om), MOCIIP, Tender Board (tenderboard.gov.om)",
+        "Israel":       "ISA (isa.gov.il), TASE (tase.co.il), Rasham Hachvarot, Negishut.gov.il",
+        "Egypt":        "FRA (fra.gov.eg), EGX (egx.com.eg), Commercial Registry, Monafasat procurement",
+        "South Africa": "FSCA (fsca.co.za), JSE (jse.co.za), CIPC (cipc.co.za), etenders.gov.za",
+        "Nigeria":      "SEC (sec.gov.ng), NGX (ngxgroup.com), CAC (cac.gov.ng), BPP procurement",
+        "Kenya":        "CMA (cma.or.ke), NSE (nse.co.ke), Registrar of Companies, PPRA (ppra.go.ke)",
+        "Ghana":        "SEC (sec.gov.gh), GSE (gse.com.gh), Registrar General, PPA (ppaghana.org)",
+        "Morocco":      "AMMC (ammc.ma), Casablanca SE (casablanca-bourse.com), Tribunal de Commerce",
+        "Egypt":        "FRA (fra.gov.eg), EGX (egx.com.eg), Commercial Registry",
+        # Default fallback
     }
-    portal_hint = PORTAL_HINTS.get(country, f"national stock exchange and company registry of {country}")
+    portal_hint = PORTAL_HINTS.get(country)
+    if not portal_hint:
+        # Agent discovers portals for unlisted countries
+        portal_hint = (f"Search first: 'stock exchange financial regulator company registry annual report portal {country}' "
+                       f"to discover the right official portals for {country}")
 
     system = f"""You are a regulatory research specialist finding official government documents for {company_name} ({ticker or sector}, {country}).
 
@@ -238,12 +298,14 @@ WHAT TO FIND:
 6. Environmental/ESG regulatory disclosures
 7. Bankruptcy or insolvency filings
 8. Board composition and governance disclosures
+9. Major client / customer disclosures in filings
 
 STRATEGY:
-- Search for "{company_name} annual report {current_year} PDF site:{portal_hint.split('(')[-1].split(')')[0] if '(' in portal_hint else country.lower()}"
+- If portals are unknown, FIRST search: "official stock exchange financial regulator company registry {country}"
+- Then search: "{company_name} annual report {current_year} PDF filetype:pdf"
 - When you find a direct PDF link, ALWAYS browse it — the agent will extract the text
-- Search for audit opinions specifically: "{company_name} auditor report qualified opinion"
-- Search govt contract databases: "{company_name} government contract award"
+- Search for audit opinions: "{company_name} auditor report qualified opinion {current_year}"
+- Search govt contracts: "{company_name} government contract tender award {country}"
 
 Each step respond with JSON:
 {{"reasoning":"","search_query":"","query_type":"annual_report|audit|govt_contract|regulatory|filing","pdf_url":"","done":false}}
@@ -366,6 +428,9 @@ REQUIRED DATA:
 [ ] Latest SEC/govt filing highlights (10-K, annual report)
 [ ] Recent news (5+ items)
 [ ] ESG / sustainability score if available
+[ ] Major clients / key customers (named if disclosed)
+[ ] Customer concentration risk (% revenue from top clients)
+[ ] Notable partnerships and distribution agreements
 """
 
     system = f"""You are a senior equity research analyst collecting data for {label} ({sector}, {country}).
@@ -661,6 +726,7 @@ CRITICAL RULES:
 8. Evidence marked [GOVT PDF] or [UPLOADED DOC] is highly authoritative — prioritise these over web snippets.
 9. If auditor's report is found, extract the audit opinion (unqualified/qualified/adverse) and note it in key_filing_highlights.
 10. If govt contracts or regulatory fines are found in evidence, populate govt_contracts and regulatory_actions arrays.
+11. clients.notable_clients: list every named client/customer found — from annual reports, press releases, case studies, filings. Include revenue contribution % if known.
 
 Return this exact JSON:
 {{
@@ -710,6 +776,19 @@ Return this exact JSON:
     "legal_issues": [],
     "govt_contracts": [],
     "regulatory_actions": []
+  }},
+  "clients": {{
+    "notable_clients": [
+      {{"name":"","sector":"","relationship":"","revenue_contribution":"","since":""}}
+    ],
+    "customer_concentration": "",
+    "top_client_revenue_pct": "",
+    "client_retention_note": "",
+    "key_partnerships": [
+      {{"partner":"","type":"","description":""}}
+    ],
+    "distribution_channels": [],
+    "client_acquisition_trend": "Growing|Stable|Declining|Unknown"
   }},
   "competitive_position": {{
     "market_share": "",
