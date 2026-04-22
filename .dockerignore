@@ -1,0 +1,45 @@
+# Source control
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+*.egg-info/
+
+# Dev-only files — NEVER in Docker image
+generate_license.py
+keys/
+*.lic
+migrate_to_pg.py
+setup.sh
+
+# Data / secrets
+.env
+*.env
+app.log
+*.db
+*.db-shm
+*.db-wal
+ddq_platform.db*
+ninja.pem
+deps.svg
+
+# Uploads / user data
+uploads/
+company_docs/
+documents/
+
+# Build artifacts
+dist/
+build/
+.pyarmor/
+
+# IDE
+.idea/
+.vscode/
+*.swp

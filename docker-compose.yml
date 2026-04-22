@@ -1,0 +1,71 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────────────────
+# DDQ Platform — Client Deployment
+# 1. Place your license.lic file in the ./license/ directory
+# 2. Fill in the required environment variables below
+# 3. Run: docker-compose up -d
+# ──────────────────────────────────────────────────────────────────────────
+
+services:
+  app:
+    image: ddq-platform:latest          # set by vendor, or: your-registry.com/ddq-platform:1.0.0
+    restart: unless-stopped
+    ports:
+      - "8080:8080"                     # change left side to use a different host port
+    environment:
+      # ── Required ─────────────────────────────────────────────────────────
+      DATABASE_URL: "postgresql://ddq_user:CHANGE_PASSWORD@db:5432/ddq_platform"
+      SECRET_KEY:   "CHANGE_TO_A_LONG_RANDOM_STRING_32_CHARS_MIN"
+
+      # ── LLM API Keys (configure at least one) ────────────────────────────
+      OPENAI_API_KEY:    ""
+      ANTHROPIC_API_KEY: ""
+
+      # ── Optional branding ─────────────────────────────────────────────────
+      FUND_NAME: "My Fund"
+
+      # ── License ───────────────────────────────────────────────────────────
+      LICENSE_FILE: "/app/license/license.lic"
+
+      # ── Performance ───────────────────────────────────────────────────────
+      WORKERS: "2"
+      PORT: "8080"
+
+    volumes:
+      - ./license:/app/license:ro       # mount your license.lic here (read-only)
+      - app_uploads:/app/uploads
+      - app_docs:/app/company_docs
+      - app_documents:/app/documents
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ddq_platform
+      POSTGRES_USER:     ddq_user
+      POSTGRES_PASSWORD: CHANGE_PASSWORD     # ← match DATABASE_URL above
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ddq_user -d ddq_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:
+  app_uploads:
+  app_docs:
+  app_documents:

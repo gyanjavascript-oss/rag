@@ -22,6 +22,16 @@ from agent import stream_answer, generate_investor_profile
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret-change-me")
 
+# ── License validation ────────────────────────────────────────────────────────
+# Skipped in local dev mode (no LICENSE_FILE env var set)
+if os.getenv("LICENSE_FILE"):
+    from license_manager import require_license, get_license_info
+    _lic = require_license(app)
+    app.config["LICENSE"] = _lic
+else:
+    app.config["LICENSE"] = {"valid": True, "tier": "dev", "features": [], "customer": "Developer"}
+# ─────────────────────────────────────────────────────────────────────────────
+
 import re as _re
 
 @app.template_filter('clean_question')
@@ -134,6 +144,15 @@ def _parse_qa_text(text: str) -> list[dict]:
             entries.append({"question": q, "answer": a})
     return entries
 
+
+# ── Health check (Docker healthcheck + load balancer probe) ───────────────────
+
+@app.route("/health")
+def health():
+    from flask import jsonify
+    lic = app.config.get("LICENSE", {})
+    return jsonify({"status": "ok", "license": lic.get("valid", True),
+                    "customer": lic.get("customer",""), "tier": lic.get("tier","")})
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
 
