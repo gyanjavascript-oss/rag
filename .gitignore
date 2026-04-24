@@ -17,3 +17,6 @@ uploads/
 
 # OS
 .DS_Store
+keys/
+*.lic
+*.tar.gz

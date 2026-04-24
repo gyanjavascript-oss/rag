@@ -105,29 +105,41 @@
 
 <!-- Add Modal -->
 <div id="addModal" class="modal-overlay" style="display:none;">
-  <div class="modal" style="width:500px;">
+  <div class="modal">
     <div class="modal-header">
       <h3>Add Company</h3>
       <button class="modal-close" onclick="document.getElementById('addModal').style.display='none'">✕</button>
     </div>
-    <form method="POST" action="{{ url_for('company_research_add') }}" style="padding:1.5rem;display:flex;flex-direction:column;gap:.85rem;">
-      <div class="form-group">
-        <label class="form-label">Company Name *</label>
-        <input name="company_name" type="text" class="form-input" placeholder="e.g. Apple Inc." required>
+    <form method="POST" action="{{ url_for('company_research_add') }}">
+      <div class="field-group">
+        <label>Company Name <span class="required">*</span></label>
+        <input name="company_name" type="text" placeholder="e.g. Apple Inc." required>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
-        <div class="form-group">
-          <label class="form-label">Ticker Symbol</label>
-          <input name="ticker" type="text" class="form-input" placeholder="e.g. AAPL" style="text-transform:uppercase;">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Country</label>
-          <input name="country" type="text" class="form-input" placeholder="e.g. USA">
-        </div>
+      <div class="field-group">
+        <label>Ticker Symbol</label>
+        <input name="ticker" type="text" placeholder="e.g. AAPL" style="text-transform:uppercase;">
       </div>
-      <div class="form-group">
-        <label class="form-label">Sector</label>
-        <select name="sector" class="form-input">
+      <div class="field-group">
+        <label>Country</label>
+        <select name="country">
+          <option value="">— Select country —</option>
+          {% for ctry in ['Afghanistan','Albania','Algeria','Angola','Argentina','Armenia','Australia','Austria','Azerbaijan',
+            'Bahrain','Bangladesh','Belarus','Belgium','Bolivia','Bosnia','Botswana','Brazil','Bulgaria',
+            'Cambodia','Cameroon','Canada','Chile','China','Colombia','Costa Rica','Croatia','Cyprus','Czech Republic',
+            'Denmark','Dominican Republic','Ecuador','Egypt','Estonia','Ethiopia','Finland','France','Georgia',
+            'Germany','Ghana','Greece','Guatemala','Honduras','Hong Kong','Hungary','Iceland','India','Indonesia',
+            'Iran','Iraq','Ireland','Israel','Italy','Jamaica','Japan','Jordan','Kazakhstan','Kenya','Kuwait',
+            'Latvia','Lebanon','Lithuania','Luxembourg','Malaysia','Mexico','Morocco','Netherlands','New Zealand',
+            'Nigeria','Norway','Oman','Pakistan','Panama','Peru','Philippines','Poland','Portugal','Qatar',
+            'Romania','Russia','Saudi Arabia','Serbia','Singapore','Slovakia','Slovenia','South Africa',
+            'South Korea','Spain','Sri Lanka','Sweden','Switzerland','Taiwan','Tanzania','Thailand','Turkey',
+            'UAE','Uganda','UK','Ukraine','Uruguay','USA','Uzbekistan','Venezuela','Vietnam','Zimbabwe'] %}
+          <option>{{ ctry }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
+        <label>Sector</label>
+        <select name="sector">
           <option value="">— Select sector —</option>
           {% for s in ['Technology','Healthcare','Financials','Consumer Discretionary','Consumer Staples',
             'Energy','Materials','Industrials','Real Estate','Utilities','Communication Services',
@@ -135,11 +147,11 @@
           <option>{{ s }}</option>{% endfor %}
         </select>
       </div>
-      <div class="form-group">
-        <label class="form-label">Notes</label>
-        <textarea name="notes" class="form-input" rows="2" placeholder="Optional research notes…"></textarea>
+      <div class="field-group">
+        <label>Notes <span class="muted">(optional)</span></label>
+        <textarea name="notes" rows="2" placeholder="Optional research notes…"></textarea>
       </div>
-      <div style="display:flex;gap:.75rem;justify-content:flex-end;">
+      <div class="modal-footer">
         <button type="button" class="btn-outline" onclick="document.getElementById('addModal').style.display='none'">Cancel</button>
         <button type="submit" class="btn-primary">Add Company</button>
       </div>
@@ -149,40 +161,53 @@
 
 <!-- Edit Modal -->
 <div id="editModal" class="modal-overlay" style="display:none;">
-  <div class="modal" style="width:500px;">
+  <div class="modal">
     <div class="modal-header">
       <h3>Edit Company</h3>
       <button class="modal-close" onclick="document.getElementById('editModal').style.display='none'">✕</button>
     </div>
-    <form id="editForm" method="POST" style="padding:1.5rem;display:flex;flex-direction:column;gap:.85rem;">
-      <div class="form-group">
-        <label class="form-label">Company Name *</label>
-        <input id="edit_name" name="company_name" type="text" class="form-input" required>
+    <form id="editForm" method="POST">
+      <div class="field-group">
+        <label>Company Name <span class="required">*</span></label>
+        <input id="edit_name" name="company_name" type="text" required>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
-        <div class="form-group">
-          <label class="form-label">Ticker</label>
-          <input id="edit_ticker" name="ticker" type="text" class="form-input" style="text-transform:uppercase;">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Country</label>
-          <input id="edit_country" name="country" type="text" class="form-input">
-        </div>
+      <div class="field-group">
+        <label>Ticker</label>
+        <input id="edit_ticker" name="ticker" type="text" style="text-transform:uppercase;">
       </div>
-      <div class="form-group">
-        <label class="form-label">Sector</label>
-        <select id="edit_sector" name="sector" class="form-input">
+      <div class="field-group">
+        <label>Country</label>
+        <select id="edit_country" name="country">
+          <option value="">— Select country —</option>
+          {% for ctry in ['Afghanistan','Albania','Algeria','Angola','Argentina','Armenia','Australia','Austria','Azerbaijan',
+            'Bahrain','Bangladesh','Belarus','Belgium','Bolivia','Bosnia','Botswana','Brazil','Bulgaria',
+            'Cambodia','Cameroon','Canada','Chile','China','Colombia','Costa Rica','Croatia','Cyprus','Czech Republic',
+            'Denmark','Dominican Republic','Ecuador','Egypt','Estonia','Ethiopia','Finland','France','Georgia',
+            'Germany','Ghana','Greece','Guatemala','Honduras','Hong Kong','Hungary','Iceland','India','Indonesia',
+            'Iran','Iraq','Ireland','Israel','Italy','Jamaica','Japan','Jordan','Kazakhstan','Kenya','Kuwait',
+            'Latvia','Lebanon','Lithuania','Luxembourg','Malaysia','Mexico','Morocco','Netherlands','New Zealand',
+            'Nigeria','Norway','Oman','Pakistan','Panama','Peru','Philippines','Poland','Portugal','Qatar',
+            'Romania','Russia','Saudi Arabia','Serbia','Singapore','Slovakia','Slovenia','South Africa',
+            'South Korea','Spain','Sri Lanka','Sweden','Switzerland','Taiwan','Tanzania','Thailand','Turkey',
+            'UAE','Uganda','UK','Ukraine','Uruguay','USA','Uzbekistan','Venezuela','Vietnam','Zimbabwe'] %}
+          <option>{{ ctry }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
+        <label>Sector</label>
+        <select id="edit_sector" name="sector">
+          <option value="">— Select sector —</option>
           {% for s in ['Technology','Healthcare','Financials','Consumer Discretionary','Consumer Staples',
             'Energy','Materials','Industrials','Real Estate','Utilities','Communication Services',
             'E-Commerce','Crypto/Blockchain','Automotive','Aerospace','Retail','Media','Education','Other'] %}
           <option>{{ s }}</option>{% endfor %}
         </select>
       </div>
-      <div class="form-group">
-        <label class="form-label">Notes</label>
-        <textarea id="edit_notes" name="notes" class="form-input" rows="2"></textarea>
+      <div class="field-group">
+        <label>Notes <span class="muted">(optional)</span></label>
+        <textarea id="edit_notes" name="notes" rows="2" placeholder="Optional research notes…"></textarea>
       </div>
-      <div style="display:flex;gap:.75rem;justify-content:flex-end;">
+      <div class="modal-footer">
         <button type="button" class="btn-outline" onclick="document.getElementById('editModal').style.display='none'">Cancel</button>
         <button type="submit" class="btn-primary">Save Changes</button>
       </div>
@@ -196,7 +221,9 @@ function openEdit(btn) {
   document.getElementById('editForm').action = '/company-research/' + d.editId + '/edit';
   document.getElementById('edit_name').value    = d.editName;
   document.getElementById('edit_ticker').value  = d.editTicker;
-  document.getElementById('edit_country').value = d.editCountry;
+  const cSel = document.getElementById('edit_country');
+  cSel.value = d.editCountry;
+  if (!cSel.value) cSel.value = '';
   document.getElementById('edit_sector').value  = d.editSector;
   document.getElementById('edit_notes').value   = d.editNotes;
   document.getElementById('editModal').style.display = 'flex';
